@@ -11,6 +11,9 @@
 <meta property="og:description" content="Set it down. Pick it up anywhere. Keep files, text and links at the edge of your screen, then drag them into any app.">
 <meta property="og:type" content="website">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@500&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -51,7 +54,7 @@
   <section class="hero" aria-labelledby="hero-title">
     <div class="wrap">
       <p class="eyebrow">Free for Windows 10 and 11</p>
-      <h1 id="hero-title">Set it down. Pick it up anywhere.</h1>
+      <h1 id="hero-title">Set it down.<br><em>Pick it up anywhere.</em></h1>
       <p class="lede">Cairn gives you a place to put things at the edge of your screen. Drop in files, text or links while you work, then drag them into any app when you need them.</p>
       <div class="actions">
         <a class="btn primary" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener"><svg aria-hidden="true"><use href="#i-windows"/></svg>Download for Windows</a>
@@ -65,7 +68,7 @@
       <figure>
         <div class="screen" aria-hidden="true">
           <div class="app">
-            <div class="app-bar">New message</div>
+            <div class="app-bar">New message<span class="ctl"><i></i><i></i><i></i></span></div>
             <div class="app-body">
               <div class="field"><span>To</span><i style="width: 46%"></i></div>
               <div class="field"><span>Subject</span><i style="width: 62%"></i></div>
@@ -88,6 +91,7 @@
             <div class="flyout-foot">2 selected &nbsp; Drag out to use &nbsp; Del remove &nbsp; Esc close</div>
           </div>
           <div class="edge-tab"></div>
+          <div class="taskbar"><span class="start"><svg><use href="#i-windows"/></svg></span><span class="tray"><svg><use href="#i-mark"/></svg>4:12 PM</span></div>
         </div>
         <figcaption>Pick what you need from your stack and drag it straight into an email.</figcaption>
       </figure>
@@ -96,7 +100,8 @@
 
   <section id="how" aria-labelledby="how-title">
     <div class="wrap">
-      <h2 id="how-title">How it works</h2>
+      <p class="kicker">How it works</p>
+      <h2 id="how-title">Three moves, no setup</h2>
       <ol class="steps">
         <li>
           <div class="pic" aria-hidden="true">
@@ -131,7 +136,7 @@
           </div>
           <span class="num">3</span>
           <h3>Drag it where it goes</h3>
-          <p>Open your stack with a click or <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd>, pick one item or several, and drag them into an email, a folder, a chat or a document.</p>
+          <p>Open your stack with a click or <span class="keys"><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span>, pick one item or several, and drag them into an email, a folder, a chat or a document.</p>
         </li>
       </ol>
     </div>
@@ -139,21 +144,22 @@
 
   <section id="features" aria-labelledby="features-title">
     <div class="wrap">
+      <p class="kicker">Features</p>
       <h2 id="features-title">Made to stay out of your way</h2>
       <div class="grid">
-        <div class="card"><svg aria-hidden="true"><use href="#i-apps"/></svg><h3>Works with your apps</h3><p>If you can drop something into an app, you can drop it from Cairn: Explorer, your browser, email, chat and more.</p></div>
-        <div class="card"><svg aria-hidden="true"><use href="#i-stack"/></svg><h3>Several at once</h3><p>Gather files from different folders as you go, then drag them all out together in one move.</p></div>
-        <div class="card"><svg aria-hidden="true"><use href="#i-pin"/></svg><h3>Your files stay put</h3><p>Cairn remembers where your files are. It never moves or copies them behind your back.</p></div>
-        <div class="card"><svg aria-hidden="true"><use href="#i-lock"/></svg><h3>Private</h3><p>Everything stays on your PC. There's no account, no cloud and nothing to sign up for.</p></div>
-        <div class="card"><svg aria-hidden="true"><use href="#i-feather"/></svg><h3>Light as a feather</h3><p>A small app that starts with Windows if you like, and you won't notice it running until you need it.</p></div>
-        <div class="card"><svg aria-hidden="true"><use href="#i-game"/></svg><h3>Never in the way</h3><p>It tucks itself away while you play a game, watch a video full screen or give a presentation.</p></div>
+        <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-apps"/></svg></span><h3>Works with your apps</h3><p>If you can drop something into an app, you can drop it from Cairn: Explorer, your browser, email, chat and more.</p></div>
+        <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-stack"/></svg></span><h3>Several at once</h3><p>Gather files from different folders as you go, then drag them all out together in one move.</p></div>
+        <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-pin"/></svg></span><h3>Your files stay put</h3><p>Cairn remembers where your files are. It never moves or copies them behind your back.</p></div>
+        <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-lock"/></svg></span><h3>Private</h3><p>Everything stays on your PC. There's no account, no cloud and nothing to sign up for.</p></div>
+        <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-feather"/></svg></span><h3>Light as a feather</h3><p>A small app that starts with Windows if you like, and you won't notice it running until you need it.</p></div>
+        <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-game"/></svg></span><h3>Never in the way</h3><p>It tucks itself away while you play a game, watch a video full screen or give a presentation.</p></div>
       </div>
     </div>
   </section>
 
   <section id="faq" aria-labelledby="faq-title">
     <div class="wrap faq">
-      <h2 id="faq-title">Questions</h2>
+      <div><p class="kicker">FAQ</p><h2 id="faq-title">Questions</h2></div>
       <div class="qs">
         <details>
           <summary>Is Cairn free?</summary>
