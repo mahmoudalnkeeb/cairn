@@ -217,13 +217,10 @@ section > .wrap > h2 { margin-bottom: 40px; }
 .cta .fine { margin-top: 20px; }
 
 /* Support, as on the FeatherLaunch site */
-.support { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px 64px; padding: clamp(24px, 5vw, 56px); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
-.support p { margin-block: 16px 24px; color: var(--muted); }
-.support dl div { padding: 14px 0; border-bottom: 1px solid var(--line); }
-.support dl div:last-child { border-bottom: 0; }
-.support dt { font-weight: 600; }
-.support dd { color: var(--muted); font-size: .9375rem; }
-@media (max-width: 860px) { .support { grid-template-columns: 1fr; } }
+.support { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px 48px; padding: clamp(24px, 4vw, 40px); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.support > div { flex: 1 1 28em; }
+.support h2 { font-size: clamp(1.5rem, 2.5vw, 1.875rem); }
+.support p { max-width: 44em; margin-top: 10px; color: var(--muted); }
 
 /* Footer */
 .foot { margin-top: var(--section); padding-block: 40px; border-top: 1px solid var(--line); }
