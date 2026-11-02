@@ -8,6 +8,7 @@ Status: M2 built (multi-select, multi-item drag out, clear with undo) on top of 
 - [BRAND.md](BRAND.md): name, voice, logo, color, type and motion
 - [brand/](brand/): logo and app icon (SVG)
 - [docs/decisions.md](docs/decisions.md): decisions so far
+- [site/](site/): the landing page, deployed to GitHub Pages by `.github/workflows/pages.yml`
 
 ## Build and run
 
@@ -47,6 +48,7 @@ Measured on the release build: 331 KB executable, about 18.5 MB RAM at idle, no 
 ```
 cairn/
   PRD.md, BRAND.md, brand/   product and brand
+  site/                      landing page (GitHub Pages)
   docs/decisions.md
   src/
     main.rs       app state, tray menu, hotkey, fullscreen detection, drop routing
