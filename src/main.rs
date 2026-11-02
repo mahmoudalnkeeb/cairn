@@ -7,6 +7,7 @@ mod clipboard;
 mod dnd;
 mod edgetab;
 mod gfx;
+mod select;
 mod settings;
 mod shelf;
 mod stackview;
@@ -32,10 +33,14 @@ const WM_TRAY: u32 = WM_APP + 1;
 const HOTKEY_ID: i32 = 1;
 const FULLSCREEN_TIMER: usize = 1;
 const PASTE_TIMER: usize = 2;
+const UNDO_TIMER: usize = 3;
+const UNDO_MS: u32 = 10_000;
 
 const CMD_OPEN: u32 = 1;
 const CMD_RUN_AT_LOGIN: u32 = 2;
 const CMD_QUIT: u32 = 3;
+const CMD_CLEAR: u32 = 4;
+const CMD_UNDO_CLEAR: u32 = 5;
 const CMD_EDGE_LEFT: u32 = 10;
 const CMD_EDGE_RIGHT: u32 = 11;
 const CMD_HOTKEY_BASE: u32 = 100;
@@ -49,6 +54,8 @@ pub struct App {
     pub stack: shelf::Shelf,
     pub stack_view: stackview::StackView,
     pub settings: Settings,
+    /// What "Clear stack" took, while it can still be undone.
+    cleared: Vec<shelf::ShelfItem>,
     hotkey: Option<&'static str>,
     tray_icon: HICON,
     taskbar_created: u32,
@@ -199,6 +206,40 @@ pub fn schedule_paste(app: &App) {
     }
 }
 
+/// Empties the stack and offers undo for 10 seconds: click the notification
+/// or choose "Undo clear" from the tray menu.
+fn clear_stack(app: &mut App) {
+    let cleared = app.stack.clear();
+    if cleared.is_empty() {
+        return;
+    }
+    app.stack.save();
+    stackview::close(app, false);
+    let n = cleared.len();
+    app.cleared = cleared;
+    let what = if n == 1 { "1 item".to_string() } else { format!("{n} items") };
+    notify(app, "Stack cleared", &format!("Removed {what}. Click here within 10 seconds to undo."));
+    unsafe {
+        SetTimer(app.host, UNDO_TIMER, UNDO_MS, None);
+    }
+}
+
+fn undo_clear(app: &mut App) {
+    unsafe {
+        let _ = KillTimer(app.host, UNDO_TIMER);
+    }
+    if app.cleared.is_empty() {
+        return;
+    }
+    let back = app.stack.restore(std::mem::take(&mut app.cleared));
+    app.stack.save();
+    if app.stack_view.open {
+        stackview::refresh(app);
+    }
+    let what = if back == 1 { "1 item is".to_string() } else { format!("{back} items are") };
+    notify(app, "Clear undone", &format!("{what} back in the stack."));
+}
+
 fn register_hotkey(host: HWND, i: usize) -> bool {
     let h = &settings::HOTKEYS[i];
     unsafe { RegisterHotKey(host, HOTKEY_ID, h.mods | MOD_NOREPEAT, h.vk.0 as u32).is_ok() }
@@ -241,6 +282,12 @@ pub fn show_context_menu(app: &mut App) {
         let Ok(popup) = CreatePopupMenu() else { return };
         let open = HSTRING::from(format!("Open stack\t{}", app.hotkey.unwrap_or_default()));
         let _ = AppendMenuW(popup, MF_STRING, CMD_OPEN as usize, &open);
+        if app.cleared.is_empty() {
+            let empty = if app.stack.items.is_empty() { MF_GRAYED } else { MF_ENABLED };
+            let _ = AppendMenuW(popup, MF_STRING | empty, CMD_CLEAR as usize, w!("Clear stack"));
+        } else {
+            let _ = AppendMenuW(popup, MF_STRING, CMD_UNDO_CLEAR as usize, w!("Undo clear"));
+        }
         let _ = AppendMenuW(popup, MF_SEPARATOR, 0, None);
         if let Ok(keys) = CreatePopupMenu() {
             for (i, h) in settings::HOTKEYS.iter().enumerate() {
@@ -267,6 +314,8 @@ pub fn show_context_menu(app: &mut App) {
         let _ = DestroyMenu(popup);
         match cmd.0 as u32 {
             CMD_OPEN => toggle_stack(app),
+            CMD_CLEAR => clear_stack(app),
+            CMD_UNDO_CLEAR => undo_clear(app),
             CMD_EDGE_LEFT => set_edge(app, Edge::Left),
             CMD_EDGE_RIGHT => set_edge(app, Edge::Right),
             CMD_RUN_AT_LOGIN => {
@@ -340,8 +389,15 @@ fn host_handle(app: &mut App, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Optio
         WM_TRAY => match lparam.0 as u32 {
             WM_LBUTTONUP => toggle_stack(app),
             WM_RBUTTONUP => show_context_menu(app),
+            NIN_BALLOONUSERCLICK if !app.cleared.is_empty() => undo_clear(app),
             _ => {}
         },
+        WM_TIMER if wparam.0 == UNDO_TIMER => {
+            unsafe {
+                let _ = KillTimer(app.host, UNDO_TIMER);
+            }
+            app.cleared.clear();
+        }
         WM_TIMER if wparam.0 == FULLSCREEN_TIMER => poll_fullscreen(app),
         WM_TIMER if wparam.0 == PASTE_TIMER => {
             unsafe {
@@ -426,6 +482,7 @@ fn main() -> Result<()> {
             stack: shelf::Shelf::load(),
             stack_view: stackview::StackView::new(stack_hwnd),
             settings: Settings::load(),
+            cleared: Vec::new(),
             hotkey: None,
             tray_icon,
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),

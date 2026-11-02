@@ -11,6 +11,7 @@ use windows::Win32::System::Memory::*;
 use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
 use windows::Win32::UI::Shell::*;
+use windows::Win32::UI::Shell::Common;
 use windows::core::*;
 
 use crate::shelf::{Dropped, Kind};
@@ -205,6 +206,43 @@ pub fn data_object(kind: &Kind) -> Option<IDataObject> {
     }
 }
 
+/// One data object for several items. Files win: if any are selected, only
+/// the files go, as one shell item array, so Explorer and mail clients see a
+/// normal multi-file drag. Otherwise texts and links go as lines of text.
+pub fn data_object_many(kinds: &[&Kind]) -> Option<IDataObject> {
+    if let [one] = kinds {
+        return data_object(one);
+    }
+    let paths: Vec<&PathBuf> = kinds.iter().filter_map(|k| if let Kind::File(p) = k { Some(p) } else { None }).collect();
+    if paths.is_empty() {
+        let lines: Vec<&str> = kinds
+            .iter()
+            .filter_map(|k| match k {
+                Kind::Text(t) | Kind::Link(t) => Some(t.as_str()),
+                Kind::File(_) => None,
+            })
+            .collect();
+        let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None).ok()? };
+        set_utf16(&obj, CF_UNICODETEXT.0, &lines.join("\r\n"))?;
+        return Some(obj);
+    }
+    unsafe {
+        let pidls: Vec<*const Common::ITEMIDLIST> = paths
+            .iter()
+            .map(|p| ILCreateFromPathW(&HSTRING::from(p.to_string_lossy().as_ref())) as *const Common::ITEMIDLIST)
+            .filter(|p| !p.is_null())
+            .collect();
+        let data = (!pidls.is_empty())
+            .then(|| SHCreateShellItemArrayFromIDLists(&pidls).ok())
+            .flatten()
+            .and_then(|array| array.BindToHandler(None, &BHID_DataObject).ok());
+        for p in pidls {
+            ILFree(Some(p));
+        }
+        data
+    }
+}
+
 /// Runs the modal drag loop. Callers must not hold app state across it,
 /// since window messages keep flowing while it runs.
 pub fn drag_out(data: &IDataObject) -> DROPEFFECT {
@@ -214,4 +252,34 @@ pub fn drag_out(data: &IDataObject) -> DROPEFFECT {
         let _ = DoDragDrop(data, &source, DROPEFFECT_COPY | DROPEFFECT_LINK, &mut effect);
     }
     effect
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn several_files_drag_out_as_one_file_drop() {
+        unsafe {
+            let _ = OleInitialize(None);
+        }
+        let dir = std::env::temp_dir().join("cairn-dnd-test");
+        let _ = std::fs::create_dir_all(dir.join("sub"));
+        let (a, b) = (dir.join("a.txt"), dir.join("sub").join("b.txt"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let note = Kind::Text("skipped when files are present".into());
+        let missing = Kind::File(dir.join("gone.txt"));
+        let (ka, kb) = (Kind::File(a.clone()), Kind::File(b.clone()));
+        let obj = data_object_many(&[&ka, &note, &missing, &kb]).expect("data object");
+        let Some(Dropped::Paths(paths)) = read(&obj) else { panic!("no file drop") };
+        assert_eq!(paths, [a, b]);
+    }
+
+    #[test]
+    fn several_texts_drag_out_as_lines() {
+        let (t, l) = (Kind::Text("one".into()), Kind::Link("https://example.com".into()));
+        let obj = data_object_many(&[&t, &l]).expect("data object");
+        assert!(matches!(read(&obj), Some(Dropped::Text(s)) if s == "one\r\nhttps://example.com"));
+    }
 }

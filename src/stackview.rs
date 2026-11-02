@@ -1,10 +1,12 @@
 //! The stack flyout (C3 to C6): a grid of parked items beside the edge
-//! tab. Drag one out into any app; drop more onto the tab or the dashed tile.
+//! tab. Select one or several and drag them out into any app; drop more onto
+//! the tab or the dashed tile.
 
 use std::time::Instant;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::DirectWrite::*;
+use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::Shell::ShellExecuteW;
@@ -12,6 +14,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
 use crate::gfx::Surface;
+use crate::select::Selection;
 use crate::shelf::{self, Kind};
 use crate::settings::Edge;
 use crate::{App, clipboard, dnd, dpi_at, edgetab};
@@ -41,7 +44,9 @@ pub struct StackView {
     pub hwnd: HWND,
     pub open: bool,
     pub drop_hover: bool,
-    selected: usize,
+    /// The keyboard cursor; also where Enter acts.
+    focus: usize,
+    sel: Selection,
     /// First visible row.
     scroll: usize,
     hover: Option<usize>,
@@ -61,7 +66,8 @@ impl StackView {
             hwnd,
             open: false,
             drop_hover: false,
-            selected: 0,
+            focus: 0,
+            sel: Selection::default(),
             scroll: 0,
             hover: None,
             hover_remove: false,
@@ -79,6 +85,10 @@ impl StackView {
 /// Grid cells: one per item plus the drop tile at the end.
 fn cells(app: &App) -> usize {
     app.stack.items.len() + 1
+}
+
+fn ids(app: &App) -> Vec<u64> {
+    app.stack.items.iter().map(|i| i.id).collect()
 }
 
 fn cell_pos(index: usize, scroll: usize) -> Option<(f32, f32)> {
@@ -174,12 +184,13 @@ pub fn render(app: &mut App) {
                 continue;
             }
             let item = &items[i];
-            let selected = v.selected == i;
             let hovered = v.hover == Some(i);
             p.rect_shadow(tx, ty + 1.0, TILE_W, TILE_H, 8.0, 2.0, 0.4 * t.shadow);
             p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, if hovered { t.surface_hover } else { t.surface });
-            if selected {
+            if v.sel.contains(item.id) {
                 p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, t.primary_subtle);
+            }
+            if v.focus == i {
                 p.stroke_rounded(tx + 0.5, ty + 0.5, TILE_W - 1.0, TILE_H - 1.0, 8.0, 1.0, t.primary);
             }
             match item.icon.as_ref().and_then(|i| i.as_ref()) {
@@ -224,8 +235,11 @@ pub fn render(app: &mut App) {
         }
         p.fill_rect(cx, cy + FOOTER_Y - 4.0, CARD_W, 1.0, t.divider);
         if let Some(f) = &caption_lead {
-            let hint = "Drag out to use     Enter open     Del remove     Esc close";
-            p.text(hint, f, cx + M, cy + FOOTER_Y, CARD_W - M * 2.0, 16.0, t.text_secondary);
+            let hint = match v.sel.len() {
+                n if n > 1 => format!("{n} selected     Drag out to use     Del remove     Esc close"),
+                _ => "Drag out to use     Enter open     Del remove     Esc close".to_string(),
+            };
+            p.text(&hint, f, cx + M, cy + FOOTER_Y, CARD_W - M * 2.0, 16.0, t.text_secondary);
         }
     });
     let _ = surf.present(v.hwnd, v.origin.0, v.origin.1, 1.0);
@@ -234,7 +248,9 @@ pub fn render(app: &mut App) {
 pub fn open(app: &mut App, target: HWND) {
     app.stack_view.target = target;
     app.stack_view.open = true;
-    app.stack_view.selected = 0;
+    app.stack_view.focus = 0;
+    let ids = ids(app);
+    app.stack_view.sel.only(&ids, 0);
     app.stack_view.scroll = 0;
     app.stack_view.hover = None;
     place(app);
@@ -262,15 +278,17 @@ pub fn close(app: &mut App, restore: bool) {
 /// Called after the stack changes from outside (a drop on the edge tab).
 pub fn refresh(app: &mut App) {
     let n = cells(app);
+    let ids = ids(app);
     let v = &mut app.stack_view;
-    v.selected = v.selected.min(n - 1);
+    v.sel.retain(&ids);
+    v.focus = v.focus.min(n.saturating_sub(2));
     let rows = n.div_ceil(COLS);
     v.scroll = v.scroll.min(rows.saturating_sub(ROWS));
     render(app);
 }
 
 fn keep_visible(v: &mut StackView) {
-    let row = v.selected / COLS;
+    let row = v.focus / COLS;
     if row < v.scroll {
         v.scroll = row;
     } else if row >= v.scroll + ROWS {
@@ -313,13 +331,29 @@ fn activate(app: &mut App, index: usize) {
     }
 }
 
-fn remove(app: &mut App, index: usize) {
-    if let Some(id) = app.stack.items.get(index).map(|i| i.id) {
-        app.stack.remove(id);
-        app.stack.save();
-        app.stack_view.hover = None;
-        refresh(app);
+fn remove(app: &mut App, gone: &[u64]) {
+    if gone.is_empty() {
+        return;
     }
+    for &id in gone {
+        app.stack.remove(id);
+    }
+    app.stack.save();
+    app.stack_view.hover = None;
+    refresh(app);
+}
+
+/// Del removes the selection, or the focused tile if nothing is selected,
+/// then selects whatever moved into the focused spot.
+fn remove_selected(app: &mut App) {
+    let mut gone = app.stack_view.sel.ordered(&ids(app));
+    if gone.is_empty() {
+        gone.extend(app.stack.items.get(app.stack_view.focus).map(|i| i.id));
+    }
+    remove(app, &gone);
+    let (ids, focus) = (ids(app), app.stack_view.focus);
+    app.stack_view.sel.only(&ids, focus);
+    render(app);
 }
 
 fn hit(app: &App, lparam: LPARAM) -> Option<(usize, bool)> {
@@ -337,20 +371,43 @@ fn hit(app: &App, lparam: LPARAM) -> Option<(usize, bool)> {
     })
 }
 
-fn move_selection(app: &mut App, delta: isize) {
+fn key_down(vk: VIRTUAL_KEY) -> bool {
+    unsafe { GetKeyState(vk.0 as i32) < 0 }
+}
+
+/// Arrow keys move the focus and select it; with Shift they extend the
+/// selection from the anchor.
+fn move_focus(app: &mut App, delta: isize) {
     let n = app.stack.items.len();
     if n == 0 {
         return;
     }
+    let ids = ids(app);
     let v = &mut app.stack_view;
-    v.selected = (v.selected as isize + delta).clamp(0, n as isize - 1) as usize;
+    v.focus = (v.focus as isize + delta).clamp(0, n as isize - 1) as usize;
+    if key_down(VK_SHIFT) {
+        v.sel.extend(&ids, v.focus);
+    } else {
+        v.sel.only(&ids, v.focus);
+    }
     keep_visible(v);
     render(app);
 }
 
+/// Pressing on a selected tile drags the whole selection; pressing on any
+/// other tile selects it alone and drags just that one.
 fn start_drag(app: &mut App, index: usize) {
     app.stack_view.press = None;
-    let Some(data) = app.stack.items.get(index).and_then(|i| dnd::data_object(&i.kind)) else { return };
+    let ids = ids(app);
+    let Some(&id) = ids.get(index) else { return };
+    if !app.stack_view.sel.contains(id) {
+        app.stack_view.sel.only(&ids, index);
+        app.stack_view.focus = index;
+        render(app);
+    }
+    let chosen = app.stack_view.sel.ordered(&ids);
+    let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).map(|i| &i.kind).collect();
+    let Some(data) = dnd::data_object_many(&kinds) else { return };
     // Messages keep flowing during the drag; hold no app state across it.
     dnd::drag_out(&data);
 }
@@ -362,12 +419,17 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
     match msg {
         WM_KEYDOWN => match VIRTUAL_KEY(wparam.0 as u16) {
             VK_ESCAPE => close(app, true),
-            VK_RIGHT => move_selection(app, 1),
-            VK_LEFT => move_selection(app, -1),
-            VK_DOWN => move_selection(app, COLS as isize),
-            VK_UP => move_selection(app, -(COLS as isize)),
-            VK_RETURN => activate(app, app.stack_view.selected),
-            VK_DELETE => remove(app, app.stack_view.selected),
+            VK_RIGHT => move_focus(app, 1),
+            VK_LEFT => move_focus(app, -1),
+            VK_DOWN => move_focus(app, COLS as isize),
+            VK_UP => move_focus(app, -(COLS as isize)),
+            VK_RETURN => activate(app, app.stack_view.focus),
+            VK_DELETE => remove_selected(app),
+            VK_A if key_down(VK_CONTROL) => {
+                let ids = ids(app);
+                app.stack_view.sel.all(&ids);
+                render(app);
+            }
             _ => {}
         },
         WM_MOUSEMOVE => {
@@ -414,13 +476,24 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
         WM_LBUTTONUP => {
             app.stack_view.press = None;
             match hit(app, lparam) {
-                Some((i, true)) => remove(app, i),
+                Some((i, true)) => {
+                    let id = app.stack.items[i].id;
+                    remove(app, &[id]);
+                }
                 Some((i, false)) if i < app.stack.items.len() => {
-                    let double = app.stack_view.last_click.is_some_and(|(j, at)| {
+                    let (ctrl, shift) = (wparam.0 as u32 & MK_CONTROL.0 != 0, wparam.0 as u32 & MK_SHIFT.0 != 0);
+                    let double = !ctrl && !shift && app.stack_view.last_click.is_some_and(|(j, at)| {
                         j == i && at.elapsed().as_millis() <= unsafe { GetDoubleClickTime() } as u128
                     });
-                    app.stack_view.selected = i;
-                    app.stack_view.last_click = Some((i, Instant::now()));
+                    let ids = ids(app);
+                    let v = &mut app.stack_view;
+                    v.focus = i;
+                    match (ctrl, shift) {
+                        (_, true) => v.sel.extend(&ids, i),
+                        (true, false) => v.sel.toggle(&ids, i),
+                        _ => v.sel.only(&ids, i),
+                    }
+                    v.last_click = Some((i, Instant::now()));
                     if double {
                         app.stack_view.last_click = None;
                         activate(app, i);

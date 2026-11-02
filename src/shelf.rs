@@ -128,6 +128,23 @@ impl Shelf {
     pub fn remove(&mut self, id: u64) {
         self.items.retain(|i| i.id != id);
     }
+
+    /// Empties the stack, handing back what was in it for undo.
+    pub fn clear(&mut self) -> Vec<ShelfItem> {
+        std::mem::take(&mut self.items)
+    }
+
+    /// Puts cleared items back behind anything added since, skipping ones
+    /// that were dropped in again. Returns how many came back.
+    pub fn restore(&mut self, items: Vec<ShelfItem>) -> usize {
+        let before = self.items.len();
+        for item in items {
+            if !self.contains(&item.kind) {
+                self.items.push(item);
+            }
+        }
+        self.items.len() - before
+    }
 }
 
 fn parse(raw: &[u8]) -> Option<Vec<ShelfItem>> {
@@ -254,6 +271,19 @@ mod tests {
         assert_eq!(back.len(), 3);
         assert!(matches!(&back[2].kind, Kind::File(p) if p.to_string_lossy() == "C:\\x\\ü.txt"));
         assert!(matches!(&back[0].kind, Kind::Link(l) if l == "https://example.com"));
+    }
+
+    #[test]
+    fn clear_and_restore() {
+        let mut s = shelf();
+        s.add(Dropped::Paths(vec!["C:\\a.txt".into(), "C:\\b.txt".into()]));
+        let cleared = s.clear();
+        assert!(s.items.is_empty());
+        // Dropped again while the undo was pending: kept once, in front.
+        s.add(Dropped::Paths(vec!["C:\\b.txt".into(), "C:\\n.txt".into()]));
+        assert_eq!(s.restore(cleared), 1);
+        let names: Vec<String> = s.items.iter().map(|i| name(&i.kind)).collect();
+        assert_eq!(names, ["b.txt", "n.txt", "a.txt"]);
     }
 
     #[test]
