@@ -1,65 +1,109 @@
-# Cairn
+<p align="center">
+  <img src="brand/cairn-app-icon.svg" width="96" height="96" alt="Cairn icon">
+</p>
 
-A drop shelf for Windows 10 and 11: drag files, text, images or links to the edge of the screen to park them, then drag them out into any app.
+<h1 align="center">Cairn</h1>
 
-- Download: [latest release](https://github.com/mahmoudalnkeeb/cairn/releases/latest)
-- Website: https://mahmoudalnkeeb.github.io/cairn/
-- Changes: [CHANGELOG.md](CHANGELOG.md)
+<p align="center">A drop shelf for Windows. Park files, text and links at the edge of your screen, then drag them into any app.</p>
 
-Cairn is the working name, pending a trademark search.
+<p align="center">
+  <a href="https://github.com/mahmoudalnkeeb/cairn/releases/latest"><img src="https://img.shields.io/github/v/release/mahmoudalnkeeb/cairn" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/mahmoudalnkeeb/cairn" alt="License: GPL-3.0"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-informational" alt="Platform: Windows 10 and 11">
+</p>
 
-## What it does
+<p align="center">
+  <a href="https://mahmoudalnkeeb.github.io/cairn/">Website</a> ·
+  <a href="https://github.com/mahmoudalnkeeb/cairn/releases/latest">Download</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-- Edge tab: a slim pill on the right edge of the primary monitor, vertically centered. Drag anything to that edge and the pill grows into a "Drop here" zone. Drop and it shows "Added 1" (or "Already here"), then folds back. It hides while a fullscreen app or game is in front.
-- Drop in: files and folders, links and plain text. Duplicates are skipped. Cairn always asks the source to copy, never to move, so your files stay where they are.
-- The stack: click the tab, press Ctrl+Alt+C, or left-click the tray icon. Tiles show the shell icon or thumbnail, the name and the kind (File, Folder, Text, Link, Missing). You can also drop onto the dashed tile.
-- Select: click a tile to select it, Ctrl+click to add or drop one, Shift+click or Shift+arrows for a range, Ctrl+A for all.
-- Drag out: drag a tile into any app. Dragging a selected tile takes the whole selection. Files arrive as real file drops, several at once even from different folders; text and links as text. If a selection mixes files with text, only the files go (Missing files are skipped). Several texts or links go as one text, one per line.
-- Open and paste: double-click or Enter opens a file or link. On a text item it pastes into the app you came from.
-- Remove: Del removes the selection, the × on hover removes one tile. "Clear stack" in the tray menu empties it; click the notification or choose "Undo clear" within 10 seconds to bring everything back.
-- Persist: the stack survives restarts, encrypted with DPAPI in `%APPDATA%\Cairn\stack.bin`.
-- Settings: the tray menu has Hotkey (Ctrl+Alt+C, Ctrl+Alt+K or Ctrl+Alt+Shift+C, with automatic fallback), Screen edge (left or right) and Run at login. Choices are saved in `%APPDATA%\Cairn\settings.txt`.
+## Features
 
-Measured on the release build: about 340 KB, about 18.5 MB RAM at idle, no CPU use while idle.
+- Drag files, folders, text or links to the edge of the screen to keep them in your stack.
+- Open the stack from the edge, the tray icon or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>, and drag items into any app that accepts drops: Explorer, browsers, email, chat.
+- Select several items and drag them out in one go, even files from different folders.
+- Open a file or link with a double-click. A text item pastes into the app you came from.
+- Your stack stays until you remove it, including after a restart.
+- Cairn keeps references to your files. It never moves or copies them.
+- The edge tab hides while a game, fullscreen video or presentation is in front.
 
-## Known limits
+## Install
 
-- Primary monitor only.
-- While idle, the tab catches clicks in a 10 × 120 px strip at the edge, which can cover part of a maximized window's scrollbar. Moving the tab to the other edge avoids it.
+1. Download `Cairn.exe` from the [latest release](https://github.com/mahmoudalnkeeb/cairn/releases/latest).
+2. Run it. There is no installer and no account.
+
+Cairn is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC". Choose "More info", then "Run anyway".
+
+To start Cairn with Windows, right-click the tray icon and turn on "Run at login".
+
+## Usage
+
+Drag something to the right edge of the screen. A drop zone appears; let go and the item is in your stack.
+
+| Action | How |
+|---|---|
+| Open or close the stack | Click the edge tab, left-click the tray icon, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> |
+| Select | Click, <kbd>Ctrl</kbd>+click, <kbd>Shift</kbd>+click, arrow keys, <kbd>Ctrl</kbd>+<kbd>A</kbd> |
+| Use items | Drag them out of the stack |
+| Open or paste | Double-click or <kbd>Enter</kbd> |
+| Remove | <kbd>Del</kbd>, or the × on a tile |
+| Clear everything | Tray menu, then "Clear stack" (undo within 10 seconds) |
+| Close the stack | <kbd>Esc</kbd> |
+
+Settings are in the tray menu: the shortcut (with two alternatives if another app already uses <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>), the screen edge, and run at login.
+
+## Your data
+
+Everything stays on your PC. The stack is saved to `%APPDATA%\Cairn`, encrypted for your Windows account. Cairn makes no network requests and has no account or telemetry.
+
+To remove Cairn, quit it from the tray menu, delete `Cairn.exe`, and delete the `%APPDATA%\Cairn` folder.
+
+## Known limitations
+
+- The edge tab appears on the main monitor only.
+- The idle tab can sit over part of a maximized window's scrollbar. Moving the tab to the other edge avoids it.
 - Windows blocks dragging into or out of apps running as administrator.
-- Not signed and no installer yet.
 
-## Build and run
+## Roadmap
 
-Needs a stable Rust toolchain; the GNU toolchain works. The `windows` crate is pinned to 0.58.
+Planned next:
+
+- [ ] Edge tab on every monitor, with a choice of which ones
+- [ ] Move the tab up or down along the edge
+- [ ] Screen reader names for tiles and a full accessibility pass
+- [ ] Signed installer and a signed download
+- [ ] Microsoft Store and winget
+
+Ideas for later:
+
+- [ ] Several named stacks, shown as tabs
+- [ ] Actions on a selection: zip, copy paths, copy as Markdown links, send to a folder
+- [ ] A shortcut that adds the clipboard to the stack
+- [ ] Show the stack near the cursor while dragging (opt-in)
+- [ ] Keep a full copy of image items, for screenshots that only existed in another app
+- [ ] Optionally copy files from removable or network drives into Cairn
+
+## Building from source
+
+You need Windows 10 or 11 and a stable [Rust](https://rustup.rs/) toolchain.
 
 ```
-cargo run              # debug build, with a console for logs
-cargo build --release  # target/release/cairn.exe, no console
-cargo test             # stack, selection, drag out, storage, settings and layout tests
+git clone https://github.com/mahmoudalnkeeb/cairn
+cd cairn
+cargo build --release
 ```
 
-Only one instance runs at a time. Quit from the tray icon.
+The app is written to `target\release\cairn.exe`. `cargo run` starts a debug build with a console for logs, and `cargo test` runs the tests.
 
-## Folder layout
+## Contributing
 
-```
-cairn/
-  brand/        logo and app icon (SVG)
-  site/         website, deployed to GitHub Pages by .github/workflows/pages.yml
-  src/
-    main.rs       app state, tray menu, hotkey, fullscreen detection, drop routing
-    edgetab.rs    edge tab: idle pill, drop zone, animation
-    stackview.rs  stack flyout
-    select.rs     selection: click, Ctrl click, Shift range
-    shelf.rs      stack model, encrypted storage, shell icons
-    dnd.rs        OLE drag and drop: drop targets and drag source
-    clipboard.rs  paste a text item into the previous app
-    settings.rs   hotkey, screen edge, run at login
-    gfx.rs        Direct2D/DirectWrite on layered windows, brand colors, the mark
-    store.rs      %APPDATA%\Cairn and DPAPI helpers
-```
+Bug reports and feature requests are welcome in [Issues](https://github.com/mahmoudalnkeeb/cairn/issues). For a larger change, open an issue to discuss it before sending a pull request.
+
+## Support
+
+Cairn is free. If you would like to support it, you can donate on [Ko-fi](https://ko-fi.com/mahmoudalnakeeb). Donations pay for a code-signing certificate and time for fixes and new features.
 
 ## License
 
-[GPL-3.0](LICENSE)
+Cairn is licensed under the [GNU General Public License v3.0](LICENSE).
