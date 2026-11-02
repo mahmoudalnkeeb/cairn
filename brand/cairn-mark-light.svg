@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Cairn">
+  <title>Cairn mark, for light backgrounds</title>
+  <rect x="8" y="43" width="48" height="13" rx="6.5" fill="#6e675c"/>
+  <rect x="11" y="28" width="35" height="12" rx="6" fill="#6e675c"/>
+  <rect x="26" y="14" width="19" height="11" rx="5.5" fill="#4a6410"/>
+</svg>
