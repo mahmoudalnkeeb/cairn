@@ -62,3 +62,7 @@ cairn/
     gfx.rs        Direct2D/DirectWrite on layered windows, brand tokens, the mark
     store.rs      %APPDATA%\Cairn and DPAPI helpers
 ```
+
+## License
+
+[GPL-3.0](LICENSE)

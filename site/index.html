@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cairn: a drop shelf for Windows</title>
-<meta name="description" content="Drag files, text and links to the edge of your screen to park them, then drag them out into any app. A tiny native app for Windows 10 and 11.">
+<meta name="description" content="Drag files, text and links to the edge of your screen to keep them handy, then drag them into any app. Free for Windows 10 and 11.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#121417">
 <meta property="og:title" content="Cairn: a drop shelf for Windows">
-<meta property="og:description" content="Set it down. Pick it up anywhere. Park files, text and links at the screen edge, then drag them into any app.">
+<meta property="og:description" content="Set it down. Pick it up anywhere. Keep files, text and links at the edge of your screen, then drag them into any app.">
 <meta property="og:type" content="website">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
@@ -18,6 +18,7 @@
   <symbol id="i-github" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/></symbol>
   <!-- Ko-fi logo: Simple Icons, CC0. -->
   <symbol id="i-kofi" viewBox="0 0 24 24"><path fill="currentColor" d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.09-.108-.09-.443-.441-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 3.011.723 4.311zm6.173.478c-.928.116-1.682.028-1.682.028V7.284h1.77s1.971.551 1.971 2.638c0 1.913-.985 2.667-2.059 3.015z"/></symbol>
+  <symbol id="i-windows" viewBox="0 0 24 24"><path fill="currentColor" d="M3 5.5 10.5 4.4v7.1H3zm8.5-1.2L21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zm8.5 0H21V21l-9.5-1.3z"/></symbol>
   <symbol id="i-mark" viewBox="0 0 64 64"><rect x="8" y="43" width="48" height="13" rx="6.5" fill="var(--stone)"/><rect x="11" y="28" width="35" height="12" rx="6" fill="var(--stone)"/><rect x="26" y="14" width="19" height="11" rx="5.5" fill="var(--primary)"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M6 3h8l4 4v14H6z M14 3v4h4"/></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.75" y="5.75" width="16.5" height="12.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="m4 16 5-5 4 4 2-2 5 4"/></symbol>
@@ -25,6 +26,12 @@
   <symbol id="i-text" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M5 7h14M5 11h14M5 15h9"/></symbol>
   <symbol id="i-link" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-apps" viewBox="0 0 24 24"><rect x="3.75" y="3.75" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="13.25" y="3.75" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.75" y="13.25" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="13.25" y="13.25" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M12 21s-6-5.4-6-10.5a6 6 0 0 1 12 0C18 15.6 12 21 12 21Z"/><circle cx="12" cy="10.5" r="2.25" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 24 24"><rect x="3.75" y="4.75" width="16.5" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.75" y="14.25" width="16.5" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-feather" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M6.5 17.5C6 11.5 11.5 6 19 5c-1 7-6.5 13-12.5 12.5Z"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M4.5 19.5 9 15"/></symbol>
+  <symbol id="i-game" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M7 8h10a4 4 0 0 1 4 4.5l-.6 3.5a2 2 0 0 1-3.5.9L15 15H9l-1.9 1.9a2 2 0 0 1-3.5-.9L3 12.5A4 4 0 0 1 7 8Z"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M8 11v3M6.5 12.5h3"/></symbol>
 </svg>
 <a class="skip" href="#main">Skip to content</a>
 
@@ -34,22 +41,22 @@
     <nav aria-label="Main">
       <a href="#how">How it works</a>
       <a href="#features">Features</a>
-      <a href="#get">Get Cairn</a>
+      <a href="#faq">FAQ</a>
       <a href="#support">Support</a>
     </nav>
-    <a class="btn ghost small" href="https://github.com/mahmoudalnkeeb/cairn" rel="noopener"><svg aria-hidden="true"><use href="#i-github"/></svg><span>GitHub</span></a>
+    <a class="btn primary small" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener">Download</a>
   </div>
 </header>
 
 <main id="main">
   <section class="hero" aria-labelledby="hero-title">
     <div class="wrap">
-      <p class="eyebrow">Early preview for Windows 10 and 11</p>
+      <p class="eyebrow">Free for Windows 10 and 11</p>
       <h1 id="hero-title">Set it down. Pick it up anywhere.</h1>
-      <p class="lede">Cairn is a drop shelf for Windows. Drag files, text or links to the edge of your screen to park them, then drag them out into any app when you're ready.</p>
+      <p class="lede">Cairn gives you a place to put things at the edge of your screen. Drop in files, text or links while you work, then drag them into any app when you need them.</p>
       <div class="actions">
-        <a class="btn primary" href="#get">Get Cairn</a>
-        <a class="btn ghost" href="https://github.com/mahmoudalnkeeb/cairn" rel="noopener"><svg aria-hidden="true"><use href="#i-github"/></svg>View source</a>
+        <a class="btn primary" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener"><svg aria-hidden="true"><use href="#i-windows"/></svg>Download for Windows</a>
+        <a class="btn ghost" href="#how">See how it works</a>
       </div>
     </div>
   </section>
@@ -58,7 +65,17 @@
     <div class="wrap">
       <figure>
         <div class="screen" aria-hidden="true">
+          <div class="app">
+            <div class="app-bar">New message</div>
+            <div class="app-body">
+              <div class="field"><span>To</span><i style="width: 46%"></i></div>
+              <div class="field"><span>Subject</span><i style="width: 62%"></i></div>
+              <div class="lines"><i></i><i></i><i style="width: 70%"></i></div>
+              <div class="attach">Drop files here to attach</div>
+            </div>
+          </div>
           <div class="flyout">
+            <div class="drag-chip"><svg><use href="#i-image"/></svg><svg><use href="#i-file"/></svg>2 items</div>
             <div class="flyout-head"><span>Stack</span><span class="muted">6 items</span></div>
             <div class="tiles">
               <div class="tile sel"><svg><use href="#i-image"/></svg><b>trailhead.jpg</b><i>File</i></div>
@@ -73,7 +90,7 @@
           </div>
           <div class="edge-tab"></div>
         </div>
-        <figcaption>An illustration of the stack, opened beside the edge tab with two items selected.</figcaption>
+        <figcaption>Pick what you need from your stack and drag it straight into an email.</figcaption>
       </figure>
     </div>
   </section>
@@ -82,38 +99,103 @@
     <div class="wrap">
       <h2 id="how-title">How it works</h2>
       <ol class="steps">
-        <li><span class="num">1</span><h3>Drag to the edge</h3><p>Drag anything to the side of your screen. A slim tab grows into a drop zone, and the item is parked.</p></li>
-        <li><span class="num">2</span><h3>Keep working</h3><p>Switch apps, close windows, restart. Your stack stays put until you remove things.</p></li>
-        <li><span class="num">3</span><h3>Drag it out</h3><p>Open the stack with a click or <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd>, select one item or several, and drag them into any app.</p></li>
+        <li>
+          <div class="pic" aria-hidden="true">
+            <div class="pic-drop">
+              <div class="chip"><svg><use href="#i-image"/></svg>photo.jpg</div>
+              <div class="zone"><svg><use href="#i-mark"/></svg><span>Drop here</span></div>
+            </div>
+          </div>
+          <span class="num">1</span>
+          <h3>Drag it to the edge</h3>
+          <p>Drag a file, some text or a link to the side of your screen. A drop zone appears. Let go, and it's kept.</p>
+        </li>
+        <li>
+          <div class="pic" aria-hidden="true">
+            <div class="pic-stack">
+              <div class="mini"><svg><use href="#i-image"/></svg></div>
+              <div class="mini"><svg><use href="#i-file"/></svg></div>
+              <div class="mini"><svg><use href="#i-link"/></svg></div>
+              <div class="mini"><svg><use href="#i-text"/></svg></div>
+            </div>
+          </div>
+          <span class="num">2</span>
+          <h3>Carry on</h3>
+          <p>Switch apps, close windows, even restart your PC. Everything waits in your stack until you remove it.</p>
+        </li>
+        <li>
+          <div class="pic" aria-hidden="true">
+            <div class="pic-out">
+              <div class="win"><span></span><span></span><span></span></div>
+              <div class="chip out"><svg><use href="#i-image"/></svg>photo.jpg</div>
+            </div>
+          </div>
+          <span class="num">3</span>
+          <h3>Drag it where it goes</h3>
+          <p>Open your stack with a click or <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd>, pick one item or several, and drag them into an email, a folder, a chat or a document.</p>
+        </li>
       </ol>
     </div>
   </section>
 
   <section id="features" aria-labelledby="features-title">
     <div class="wrap">
-      <h2 id="features-title">Built to stay out of the way</h2>
+      <h2 id="features-title">Made to stay out of your way</h2>
       <div class="grid">
-        <div class="card"><h3>Real file drops</h3><p>Files arrive as normal file drops, so Explorer, browsers and mail clients all accept them. Several at once, even from different folders.</p></div>
-        <div class="card"><h3>Your files stay put</h3><p>Cairn keeps references and always asks to copy, never move. Nothing is uploaded and there's no account.</p></div>
-        <div class="card"><h3>Private by default</h3><p>The stack is stored on your PC, encrypted with Windows DPAPI, in your own profile.</p></div>
-        <div class="card"><h3>Tiny and native</h3><p>A 331 KB Rust app using about 18.5 MB of memory and no CPU while idle. It looks like it shipped with Windows.</p></div>
-        <div class="card"><h3>Never in your game</h3><p>The tab hides while a fullscreen app, game or presentation is up. No mouse hooks, so window drags never set it off.</p></div>
-        <div class="card"><h3>Keyboard friendly</h3><p>Arrows to move, Shift to extend, <kbd>Ctrl</kbd> <kbd>A</kbd> for all, Enter to open, Del to remove. Text items paste into the app you came from.</p></div>
+        <div class="card"><svg aria-hidden="true"><use href="#i-apps"/></svg><h3>Works with your apps</h3><p>If you can drop something into an app, you can drop it from Cairn: Explorer, your browser, email, chat and more.</p></div>
+        <div class="card"><svg aria-hidden="true"><use href="#i-stack"/></svg><h3>Several at once</h3><p>Gather files from different folders as you go, then drag them all out together in one move.</p></div>
+        <div class="card"><svg aria-hidden="true"><use href="#i-pin"/></svg><h3>Your files stay put</h3><p>Cairn remembers where your files are. It never moves or copies them behind your back.</p></div>
+        <div class="card"><svg aria-hidden="true"><use href="#i-lock"/></svg><h3>Private</h3><p>Everything stays on your PC. There's no account, no cloud and nothing to sign up for.</p></div>
+        <div class="card"><svg aria-hidden="true"><use href="#i-feather"/></svg><h3>Light as a feather</h3><p>A small app that starts with Windows if you like, and you won't notice it running until you need it.</p></div>
+        <div class="card"><svg aria-hidden="true"><use href="#i-game"/></svg><h3>Never in the way</h3><p>It tucks itself away while you play a game, watch a video full screen or give a presentation.</p></div>
       </div>
     </div>
   </section>
 
-  <section id="get" aria-labelledby="get-title">
-    <div class="wrap get">
-      <div>
-        <h2 id="get-title">Get Cairn</h2>
-        <p>Cairn is in early development. There is no installer or signed download yet; those come with the private beta. Until then you can build it from source with a stable Rust toolchain.</p>
-        <p class="muted">Needs Windows 10 (19045 or later) or Windows 11.</p>
+  <section id="faq" aria-labelledby="faq-title">
+    <div class="wrap faq">
+      <h2 id="faq-title">Questions</h2>
+      <div class="qs">
+        <details>
+          <summary>Is Cairn free?</summary>
+          <p>Yes. Cairn is free and open source under the GPL-3.0 license. There are no ads, trials or nag screens.</p>
+        </details>
+        <details>
+          <summary>Does it move or copy my files?</summary>
+          <p>No. Cairn only remembers where a file is. When you drag it out, the app you drop it on decides what to do, just as if you had dragged it from a folder.</p>
+        </details>
+        <details>
+          <summary>Will my stack still be there after a restart?</summary>
+          <p>Yes. Items stay until you remove them. If a file was moved or deleted in the meantime, its tile says Missing so you can clear it.</p>
+        </details>
+        <details>
+          <summary>Windows warned me when I opened it. Is it safe?</summary>
+          <p>Cairn is new and not signed yet, so Windows SmartScreen may show "Windows protected your PC". Choose More info, then Run anyway. The full source code is on GitHub for anyone to check.</p>
+        </details>
+        <details>
+          <summary>Which versions of Windows does it run on?</summary>
+          <p>Windows 10 and Windows 11.</p>
+        </details>
+        <details>
+          <summary>How do I close or remove it?</summary>
+          <p>Right-click the Cairn icon in the system tray and choose Quit Cairn. To remove it, delete the file you downloaded.</p>
+        </details>
       </div>
-      <pre aria-label="Build commands"><code>git clone https://github.com/mahmoudalnkeeb/cairn
-cd cairn
-cargo build --release
-target\release\cairn.exe</code></pre>
+    </div>
+  </section>
+
+  <section id="download" aria-labelledby="download-title">
+    <div class="wrap">
+      <div class="cta">
+        <svg class="cta-mark" aria-hidden="true"><use href="#i-mark"/></svg>
+        <h2 id="download-title">Give it a try</h2>
+        <p>Download the latest version from GitHub. No installer and no account, just open it and drag something to the edge of your screen.</p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener"><svg aria-hidden="true"><use href="#i-windows"/></svg>Download for Windows</a>
+          <a class="btn ghost" href="https://github.com/mahmoudalnkeeb/cairn/releases" rel="noopener">All releases</a>
+        </div>
+        <p class="fine">Free and open source · Windows 10 and 11</p>
+      </div>
     </div>
   </section>
 
@@ -122,13 +204,13 @@ target\release\cairn.exe</code></pre>
       <div class="support">
         <div>
           <h2 id="support-title">Support development</h2>
-          <p>Everything Cairn does today is free, with no nags or delays. Donating unlocks nothing and is never expected, but if you'd like to help, this is where the money goes.</p>
+          <p>Cairn is free. Donating unlocks nothing and is never expected, but if you'd like to help, this is where the money goes.</p>
           <a class="btn kofi" href="https://ko-fi.com/mahmoudalnakeeb" rel="noopener"><svg aria-hidden="true"><use href="#i-kofi"/></svg>Support on Ko-fi</a>
         </div>
         <dl>
           <div><dt>A code-signing certificate</dt><dd>Over a hundred dollars a year, and it stops Windows warning people about the download.</dd></div>
-          <div><dt>Screens to test on</dt><dd>Multi-monitor and high-DPI setups, so the edge tab lands in the right place on every display.</dd></div>
-          <div><dt>Time</dt><dd>For fixes, Windows 10 and 11 testing, and the features on the roadmap.</dd></div>
+          <div><dt>Screens to test on</dt><dd>So Cairn sits in the right place on every kind of monitor setup.</dd></div>
+          <div><dt>Time</dt><dd>For fixes, testing on Windows 10 and 11, and new features.</dd></div>
         </dl>
       </div>
     </div>
@@ -138,9 +220,10 @@ target\release\cairn.exe</code></pre>
 <footer class="foot">
   <div class="wrap">
     <a class="brand" href="./"><svg aria-hidden="true"><use href="#i-mark"/></svg>cairn</a>
-    <p class="muted">A drop shelf for Windows. Cairn is a working name.</p>
+    <p class="muted">A drop shelf for Windows. Free and open source under the <a href="https://github.com/mahmoudalnkeeb/cairn/blob/master/LICENSE" rel="noopener">GPL-3.0</a>.</p>
     <ul>
-      <li><a href="https://github.com/mahmoudalnkeeb/cairn" rel="noopener">Source</a></li>
+      <li><a href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener">Download</a></li>
+      <li><a href="https://github.com/mahmoudalnkeeb/cairn" rel="noopener">Source code</a></li>
       <li><a href="https://github.com/mahmoudalnkeeb/cairn/issues" rel="noopener">Report a problem</a></li>
       <li><a href="https://ko-fi.com/mahmoudalnakeeb" rel="noopener">Ko-fi</a></li>
     </ul>
