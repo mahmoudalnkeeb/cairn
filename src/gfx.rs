@@ -1,5 +1,5 @@
 //! Direct2D/DirectWrite rendering into per-pixel-alpha layered windows,
-//! plus the BRAND.md color tokens.
+//! plus the brand color tokens.
 
 use std::ffi::c_void;
 
@@ -33,7 +33,7 @@ impl Color {
     }
 }
 
-/// Color tokens from BRAND.md.
+/// Brand color tokens.
 pub struct Theme {
     pub surface: Color,
     pub surface_hover: Color,

@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 //! Cairn: a drop shelf for Windows. Drag anything to the screen edge to park
-//! it, then drag it out into any app. See PRD.md.
+//! it, then drag it out into any app.
 
 mod clipboard;
 mod dnd;
