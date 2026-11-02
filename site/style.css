@@ -216,12 +216,6 @@ section > .wrap > h2 { margin-bottom: 40px; }
 .fine { font-size: .875rem; }
 .cta .fine { margin-top: 20px; }
 
-/* Support, as on the FeatherLaunch site */
-.support { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px 48px; padding: clamp(24px, 4vw, 40px); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
-.support > div { flex: 1 1 28em; }
-.support h2 { font-size: clamp(1.5rem, 2.5vw, 1.875rem); }
-.support p { max-width: 44em; margin-top: 10px; color: var(--muted); }
-
 /* Footer */
 .foot { margin-top: var(--section); padding-block: 40px; border-top: 1px solid var(--line); }
 .foot .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
@@ -232,6 +226,8 @@ section > .wrap > h2 { margin-bottom: 40px; }
 .foot ul { display: flex; flex-wrap: wrap; gap: 4px 20px; }
 .foot li a { display: inline-flex; align-items: center; min-height: 44px; color: var(--muted); font-size: .875rem; text-decoration: none; }
 .foot li a:hover { color: var(--text); }
+.foot-support { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 32px; margin-top: 16px; padding-top: 20px; border-top: 1px solid var(--line); }
+.foot-support p { flex: 1 1 24em; max-width: 46em; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
