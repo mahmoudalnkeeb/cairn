@@ -2,6 +2,19 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-03
+
+### Added
+
+- The edge tab appears on every monitor. Choose which monitors show it from "Show tab on" in the tray menu.
+- Drag the tab up or down the edge to move it. "Center the tab" under "Screen edge" puts it back.
+- Screen readers such as Narrator and NVDA read the stack: each item's name, kind, selection and focus, and the file path or link. Items can be opened from the screen reader.
+
+### Changed
+
+- A fullscreen game, video or presentation hides the tab only on its own monitor.
+- The stack opens beside the tab on the monitor you are using.
+
 ## [0.1.0] - 2026-11-03
 
 The first public version.
@@ -22,4 +35,5 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.2.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.1.0

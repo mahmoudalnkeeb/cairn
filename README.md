@@ -26,7 +26,9 @@
 - Open a file or link with a double-click. A text item pastes into the app you came from.
 - Your stack stays until you remove it, including after a restart.
 - Cairn keeps references to your files. It never moves or copies them.
-- The edge tab hides while a game, fullscreen video or presentation is in front.
+- An edge tab on every monitor, or only the ones you pick. Drag the tab up or down to where you want it.
+- The edge tab hides on the monitor where a game, fullscreen video or presentation is in front.
+- Works with screen readers such as Narrator and NVDA: each item is read with its name, kind and state.
 
 ## Install
 
@@ -50,8 +52,9 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Remove | <kbd>Del</kbd>, or the × on a tile |
 | Clear everything | Tray menu, then "Clear stack" (undo within 10 seconds) |
 | Close the stack | <kbd>Esc</kbd> |
+| Move the tab | Drag it up or down the edge |
 
-Settings are in the tray menu: the shortcut (with two alternatives if another app already uses <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>), the screen edge, and run at login.
+Settings are in the tray menu: the shortcut (with two alternatives if another app already uses <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>), the screen edge, which monitors show the tab, and run at login. "Screen edge" also has "Center the tab".
 
 ## Your data
 
@@ -61,17 +64,16 @@ To remove Cairn, quit it from the tray menu, delete `Cairn.exe`, and delete the 
 
 ## Known limitations
 
-- The edge tab appears on the main monitor only.
-- The idle tab can sit over part of a maximized window's scrollbar. Moving the tab to the other edge avoids it.
+- The idle tab can sit over part of a maximized window's scrollbar. Drag the tab along the edge or switch edges to avoid it.
 - Windows blocks dragging into or out of apps running as administrator.
 
 ## Roadmap
 
 Planned next:
 
-- [ ] Edge tab on every monitor, with a choice of which ones
-- [ ] Move the tab up or down along the edge
-- [ ] Screen reader names for tiles and a full accessibility pass
+- [x] Edge tab on every monitor, with a choice of which ones (0.2)
+- [x] Move the tab up or down along the edge (0.2)
+- [x] Screen reader names for tiles (0.2)
 - [ ] Signed installer and a signed download
 - [ ] Microsoft Store and winget
 

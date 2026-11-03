@@ -1,6 +1,7 @@
-//! User choices: the global hotkey, which screen edge holds the tab, and
-//! whether Cairn starts at login. Stored in %APPDATA%\Cairn\settings.txt,
-//! except run-at-login, which lives in the registry Run key.
+//! User choices: the global hotkey, which screen edge holds the tab, which
+//! monitors show it and how high, and whether Cairn starts at login. Stored
+//! in %APPDATA%\Cairn\settings.txt, except run-at-login, which lives in the
+//! registry Run key.
 
 use std::fs;
 
@@ -39,6 +40,10 @@ pub struct Settings {
     /// Index into HOTKEYS the user picked.
     pub hotkey: usize,
     pub edge: Edge,
+    /// Device names (`\\.\DISPLAY2`) of monitors with the tab turned off.
+    pub monitors_off: Vec<String>,
+    /// Where the tab's center sits along the edge: 0 top, 1 bottom.
+    pub tab_pos: f32,
 }
 
 impl Settings {
@@ -48,7 +53,7 @@ impl Settings {
     }
 
     fn parse(text: &str) -> Settings {
-        let mut s = Settings { hotkey: 0, edge: Edge::Right };
+        let mut s = Settings { hotkey: 0, edge: Edge::Right, monitors_off: Vec::new(), tab_pos: 0.5 };
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else { continue };
             match (key.trim(), value.trim()) {
@@ -59,6 +64,12 @@ impl Settings {
                 }
                 ("edge", "left") => s.edge = Edge::Left,
                 ("edge", "right") => s.edge = Edge::Right,
+                ("monitors_off", v) => s.monitors_off = v.split(';').filter(|d| !d.is_empty()).map(String::from).collect(),
+                ("tab_pos", v) => {
+                    if let Ok(p) = v.parse::<f32>() {
+                        s.tab_pos = p.clamp(0.0, 1.0);
+                    }
+                }
                 _ => {}
             }
         }
@@ -70,7 +81,12 @@ impl Settings {
             Edge::Left => "left",
             Edge::Right => "right",
         };
-        format!("hotkey={}\nedge={edge}\n", HOTKEYS[self.hotkey].label)
+        format!(
+            "hotkey={}\nedge={edge}\nmonitors_off={}\ntab_pos={:.3}\n",
+            HOTKEYS[self.hotkey].label,
+            self.monitors_off.join(";"),
+            self.tab_pos
+        )
     }
 
     pub fn save(&self) {
@@ -109,16 +125,20 @@ mod tests {
 
     #[test]
     fn round_trips_and_ignores_junk() {
-        let s = Settings::parse("hotkey=Ctrl+Alt+K\nedge=left\nnonsense\n");
+        let s = Settings::parse("hotkey=Ctrl+Alt+K\nedge=left\nmonitors_off=\\\\.\\DISPLAY2;\\\\.\\DISPLAY3\ntab_pos=0.25\nnonsense\n");
         assert_eq!(HOTKEYS[s.hotkey].label, "Ctrl+Alt+K");
         assert_eq!(s.edge, Edge::Left);
+        assert_eq!(s.monitors_off, ["\\\\.\\DISPLAY2", "\\\\.\\DISPLAY3"]);
         let back = Settings::parse(&s.serialize());
-        assert_eq!((back.hotkey, back.edge), (s.hotkey, s.edge));
+        assert_eq!((back.hotkey, back.edge, &back.monitors_off), (s.hotkey, s.edge, &s.monitors_off));
+        assert!((back.tab_pos - 0.25).abs() < 0.001);
     }
 
     #[test]
     fn defaults_to_right_edge_and_first_hotkey() {
-        let s = Settings::parse("hotkey=F13\nedge=top");
+        let s = Settings::parse("hotkey=F13\nedge=top\ntab_pos=7");
         assert_eq!((s.hotkey, s.edge), (0, Edge::Right));
+        assert!(s.monitors_off.is_empty());
+        assert_eq!(s.tab_pos, 1.0);
     }
 }

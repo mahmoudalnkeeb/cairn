@@ -18,7 +18,8 @@ use crate::shelf::{Dropped, Kind};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Zone {
-    Tab,
+    /// The edge tab window that took the drag.
+    Tab(HWND),
     Stack,
 }
 

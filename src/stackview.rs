@@ -17,7 +17,7 @@ use crate::gfx::Surface;
 use crate::select::Selection;
 use crate::shelf::{self, Kind};
 use crate::settings::Edge;
-use crate::{App, clipboard, dnd, dpi_at, edgetab};
+use crate::{App, a11y, clipboard, dnd, dpi_at, edgetab};
 
 const COLS: usize = 4;
 const ROWS: usize = 3;
@@ -259,6 +259,51 @@ pub fn open(app: &mut App, target: HWND) {
         let _ = ShowWindow(app.stack_view.hwnd, SW_SHOW);
         let _ = SetForegroundWindow(app.stack_view.hwnd);
     }
+    announce(app);
+}
+
+/// Tells screen readers which tile has the keyboard focus.
+fn announce(app: &App) {
+    let v = &app.stack_view;
+    a11y::focus_changed(v.hwnd, (!app.stack.items.is_empty()).then_some(v.focus));
+}
+
+pub fn focus_index(app: &App) -> usize {
+    app.stack_view.focus
+}
+
+pub fn is_selected(app: &App, index: usize) -> bool {
+    app.stack.items.get(index).is_some_and(|i| app.stack_view.sel.contains(i.id))
+}
+
+/// A tile's rectangle in screen pixels, if it is scrolled into view.
+pub fn tile_screen_rect(app: &App, index: usize) -> Option<RECT> {
+    let v = &app.stack_view;
+    let (tx, ty) = cell_pos(index, v.scroll)?;
+    let s = v.dpi as f32 / 96.0;
+    let (x, y) = (v.origin.0 + ((PAD + tx) * s) as i32, v.origin.1 + ((PAD + ty) * s) as i32);
+    Some(RECT { left: x, top: y, right: x + (TILE_W * s) as i32, bottom: y + (TILE_H * s) as i32 })
+}
+
+/// The tile under a screen point.
+pub fn hit_screen(app: &App, pt: POINT) -> Option<usize> {
+    (0..app.stack.items.len()).find(|&i| {
+        tile_screen_rect(app, i).is_some_and(|r| pt.x >= r.left && pt.x < r.right && pt.y >= r.top && pt.y < r.bottom)
+    })
+}
+
+/// Moves the focus to a tile and selects only it, as a screen reader asks.
+pub fn take_focus(app: &mut App, index: usize) {
+    if index >= app.stack.items.len() {
+        return;
+    }
+    let ids = ids(app);
+    let v = &mut app.stack_view;
+    v.focus = index;
+    v.sel.only(&ids, index);
+    keep_visible(v);
+    render(app);
+    announce(app);
 }
 
 pub fn close(app: &mut App, restore: bool) {
@@ -298,7 +343,7 @@ fn keep_visible(v: &mut StackView) {
 
 /// Files and links open in their default app; text is pasted into the app
 /// the stack was opened from.
-fn activate(app: &mut App, index: usize) {
+pub fn activate(app: &mut App, index: usize) {
     enum Act {
         Missing,
         Open(String),
@@ -354,6 +399,7 @@ fn remove_selected(app: &mut App) {
     let (ids, focus) = (ids(app), app.stack_view.focus);
     app.stack_view.sel.only(&ids, focus);
     render(app);
+    announce(app);
 }
 
 fn hit(app: &App, lparam: LPARAM) -> Option<(usize, bool)> {
@@ -392,6 +438,7 @@ fn move_focus(app: &mut App, delta: isize) {
     }
     keep_visible(v);
     render(app);
+    announce(app);
 }
 
 /// Pressing on a selected tile drags the whole selection; pressing on any
@@ -413,6 +460,9 @@ fn start_drag(app: &mut App, index: usize) {
 }
 
 pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+    if msg == WM_GETOBJECT {
+        return a11y::get_object(hwnd, wparam, lparam);
+    }
     if !app.stack_view.open {
         return None;
     }
@@ -429,6 +479,7 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
                 let ids = ids(app);
                 app.stack_view.sel.all(&ids);
                 render(app);
+                announce(app);
             }
             _ => {}
         },
@@ -499,6 +550,7 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
                         activate(app, i);
                     } else {
                         render(app);
+                        announce(app);
                     }
                 }
                 _ => {}

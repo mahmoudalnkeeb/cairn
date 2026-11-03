@@ -3,6 +3,7 @@
 //! Cairn: a drop shelf for Windows. Drag anything to the screen edge to park
 //! it, then drag it out into any app.
 
+mod a11y;
 mod clipboard;
 mod dnd;
 mod edgetab;
@@ -43,14 +44,19 @@ const CMD_CLEAR: u32 = 4;
 const CMD_UNDO_CLEAR: u32 = 5;
 const CMD_EDGE_LEFT: u32 = 10;
 const CMD_EDGE_RIGHT: u32 = 11;
+const CMD_CENTER_TAB: u32 = 12;
 const CMD_HOTKEY_BASE: u32 = 100;
+const CMD_MONITOR_BASE: u32 = 200;
 
 pub struct App {
     pub gfx: Gfx,
     pub theme: Theme,
     pub animations: bool,
     pub host: HWND,
-    pub tab: edgetab::EdgeTab,
+    /// One edge tab per enabled monitor.
+    pub tabs: Vec<edgetab::EdgeTab>,
+    /// The tab the stack opens beside.
+    pub active_tab: usize,
     pub stack: shelf::Shelf,
     pub stack_view: stackview::StackView,
     pub settings: Settings,
@@ -69,6 +75,15 @@ thread_local! {
 fn app() -> Option<&'static mut App> {
     let p = APP.with(|a| a.get());
     unsafe { p.as_mut() }
+}
+
+/// For COM callbacks (screen readers), which run on the UI thread too.
+pub fn app_ref() -> Option<&'static App> {
+    app().map(|a| &*a)
+}
+
+pub fn app_mut() -> Option<&'static mut App> {
+    app()
 }
 
 pub fn dpi_at(pt: POINT) -> u32 {
@@ -164,17 +179,30 @@ pub fn toggle_stack(app: &mut App) {
     if app.stack_view.open {
         stackview::close(app, true);
     } else {
+        // Open beside the tab on the monitor the user is working on.
+        app.active_tab = edgetab::under_cursor(app);
         let target = unsafe { GetForegroundWindow() };
         stackview::open(app, target);
     }
 }
 
-/// A drag carrying something Cairn accepts is over the tab or the stack, or
+fn tab_index(app: &App, hwnd: HWND) -> Option<usize> {
+    app.tabs.iter().position(|t| t.hwnd == hwnd)
+}
+
+/// A drag carrying something Cairn accepts is over a tab or the stack, or
 /// has left it.
 pub fn on_drag_hover(zone: dnd::Zone, over: bool) {
     let Some(app) = app() else { return };
     match zone {
-        dnd::Zone::Tab => edgetab::set_drag_over(app, over),
+        dnd::Zone::Tab(hwnd) => {
+            if let Some(i) = tab_index(app, hwnd) {
+                if over {
+                    app.active_tab = i;
+                }
+                edgetab::set_drag_over(app, i, over);
+            }
+        }
         dnd::Zone::Stack => {
             app.stack_view.drop_hover = over;
             stackview::render(app);
@@ -189,8 +217,10 @@ pub fn on_drop(zone: dnd::Zone, dropped: shelf::Dropped) {
         app.stack.save();
     }
     match zone {
-        dnd::Zone::Tab => {
-            edgetab::dropped(app, added);
+        dnd::Zone::Tab(hwnd) => {
+            if let Some(i) = tab_index(app, hwnd) {
+                edgetab::dropped(app, i, added);
+            }
             if app.stack_view.open {
                 stackview::refresh(app);
             }
@@ -272,8 +302,33 @@ fn set_edge(app: &mut App, edge: Edge) {
         app.settings.edge = edge;
         app.settings.save();
         stackview::close(app, false);
-        edgetab::position(app);
+        edgetab::sync(app);
     }
+}
+
+fn center_tab(app: &mut App) {
+    app.settings.tab_pos = 0.5;
+    app.settings.save();
+    stackview::close(app, false);
+    edgetab::sync(app);
+}
+
+/// Turns the tab on or off for one monitor, keeping at least one on.
+fn toggle_monitor(app: &mut App, device: String) {
+    let off = &mut app.settings.monitors_off;
+    if let Some(at) = off.iter().position(|d| *d == device) {
+        off.remove(at);
+    } else {
+        let on = edgetab::monitors().iter().filter(|m| !off.contains(&m.device)).count();
+        if on <= 1 {
+            notify(app, "Monitors", "Cairn needs the tab on at least one monitor.");
+            return;
+        }
+        off.push(device);
+    }
+    app.settings.save();
+    stackview::close(app, false);
+    edgetab::sync(app);
 }
 
 pub fn show_context_menu(app: &mut App) {
@@ -300,7 +355,22 @@ pub fn show_context_menu(app: &mut App) {
             let check = |e: Edge| if app.settings.edge == e { MF_CHECKED } else { MF_UNCHECKED };
             let _ = AppendMenuW(edges, MF_STRING | check(Edge::Left), CMD_EDGE_LEFT as usize, w!("Left"));
             let _ = AppendMenuW(edges, MF_STRING | check(Edge::Right), CMD_EDGE_RIGHT as usize, w!("Right"));
+            let _ = AppendMenuW(edges, MF_SEPARATOR, 0, None);
+            let _ = AppendMenuW(edges, MF_STRING, CMD_CENTER_TAB as usize, w!("Center the tab"));
             let _ = AppendMenuW(popup, MF_POPUP, edges.0 as usize, w!("Screen edge"));
+        }
+        let monitors = edgetab::monitors();
+        if monitors.len() > 1
+            && let Ok(mons) = CreatePopupMenu()
+        {
+            for (i, m) in monitors.iter().enumerate() {
+                let checked = if app.settings.monitors_off.contains(&m.device) { MF_UNCHECKED } else { MF_CHECKED };
+                let (w, h) = (m.work.right - m.work.left, m.work.bottom - m.work.top);
+                let main = if m.primary { ", main" } else { "" };
+                let label = HSTRING::from(format!("Display {} ({w} × {h}{main})", i + 1));
+                let _ = AppendMenuW(mons, MF_STRING | checked, CMD_MONITOR_BASE as usize + i, &label);
+            }
+            let _ = AppendMenuW(popup, MF_POPUP, mons.0 as usize, w!("Show tab on"));
         }
         let login = if settings::run_at_login() { MF_CHECKED } else { MF_UNCHECKED };
         let _ = AppendMenuW(popup, MF_STRING | login, CMD_RUN_AT_LOGIN as usize, w!("Run at login"));
@@ -318,6 +388,10 @@ pub fn show_context_menu(app: &mut App) {
             CMD_UNDO_CLEAR => undo_clear(app),
             CMD_EDGE_LEFT => set_edge(app, Edge::Left),
             CMD_EDGE_RIGHT => set_edge(app, Edge::Right),
+            CMD_CENTER_TAB => center_tab(app),
+            c if (CMD_MONITOR_BASE..CMD_MONITOR_BASE + monitors.len() as u32).contains(&c) => {
+                toggle_monitor(app, monitors[(c - CMD_MONITOR_BASE) as usize].device.clone())
+            }
             CMD_RUN_AT_LOGIN => {
                 let on = !settings::run_at_login();
                 if !settings::set_run_at_login(on) {
@@ -341,21 +415,27 @@ fn quit(app: &mut App) {
     }
 }
 
-fn foreground_is_fullscreen() -> bool {
+/// The monitor of the foreground window, if that window is a real app.
+fn foreground_monitor() -> Option<(HWND, HMONITOR)> {
     unsafe {
         let fg = GetForegroundWindow();
         if fg.is_invalid() || fg == GetShellWindow() || fg == GetDesktopWindow() {
-            return false;
+            return None;
         }
         // Click-through overlays (recorders, assistants) are not apps.
         if GetWindowLongW(fg, GWL_EXSTYLE) as u32 & WS_EX_TRANSPARENT.0 != 0 {
-            return false;
+            return None;
         }
+        Some((fg, MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST)))
+    }
+}
+
+fn covers_monitor(fg: HWND, mon: HMONITOR) -> bool {
+    unsafe {
         let mut rect = RECT::default();
         if GetWindowRect(fg, &mut rect).is_err() {
             return false;
         }
-        let mon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         let _ = GetMonitorInfoW(mon, &mut info);
         let m = info.rcMonitor;
@@ -363,22 +443,26 @@ fn foreground_is_fullscreen() -> bool {
     }
 }
 
-/// Hides the tab while a fullscreen app, game or presentation is up, and
-/// keeps it above other topmost windows otherwise.
+/// Hides the tab on the monitor where a fullscreen app, game or
+/// presentation is up, and keeps the tabs above other topmost windows.
 fn poll_fullscreen(app: &mut App) {
+    let fg = foreground_monitor();
     let busy = match unsafe { SHQueryUserNotificationState() } {
-        Ok(QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE) => true,
+        Ok(QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE) => fg.map(|(_, m)| m),
         // QUNS_BUSY also fires for click-through overlays, so require the
         // foreground window itself to cover its monitor.
-        Ok(QUNS_BUSY) => foreground_is_fullscreen(),
-        _ => false,
+        Ok(QUNS_BUSY) => fg.filter(|&(w, m)| covers_monitor(w, m)).map(|(_, m)| m),
+        _ => None,
     };
-    if busy != app.tab.fullscreen_hidden {
-        app.tab.fullscreen_hidden = busy;
-        if busy {
-            stackview::close(app, false);
+    for i in 0..app.tabs.len() {
+        let hide = busy == Some(app.tabs[i].monitor);
+        if hide != app.tabs[i].fullscreen_hidden {
+            app.tabs[i].fullscreen_hidden = hide;
+            if hide && app.active_tab == i {
+                stackview::close(app, false);
+            }
+            edgetab::show(app, i);
         }
-        edgetab::show(app);
     }
     edgetab::raise(app);
 }
@@ -414,9 +498,13 @@ fn host_handle(app: &mut App, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Optio
             unsafe {
                 let _ = DestroyIcon(old);
             }
-            edgetab::render(app);
+            // The taskbar may have moved, changing the work areas.
+            edgetab::sync(app);
         }
-        WM_DISPLAYCHANGE => edgetab::position(app),
+        WM_DISPLAYCHANGE => {
+            stackview::close(app, false);
+            edgetab::sync(app);
+        }
         m if m == app.taskbar_created && m != 0 => tray_add(app),
         _ => return None,
     }
@@ -425,8 +513,8 @@ fn host_handle(app: &mut App, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Optio
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if let Some(app) = app() {
-        let handled = if hwnd == app.tab.hwnd {
-            edgetab::handle(app, hwnd, msg, wparam, lparam)
+        let handled = if let Some(i) = tab_index(app, hwnd) {
+            edgetab::handle(app, i, hwnd, msg, wparam, lparam)
         } else if hwnd == app.stack_view.hwnd {
             stackview::handle(app, hwnd, msg, wparam, lparam)
         } else if hwnd == app.host {
@@ -441,7 +529,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-fn create_window(class: PCWSTR, ex: WINDOW_EX_STYLE) -> Result<HWND> {
+pub fn create_window(class: PCWSTR, ex: WINDOW_EX_STYLE) -> Result<HWND> {
     unsafe {
         let instance = GetModuleHandleW(None)?;
         let wc = WNDCLASSW {
@@ -468,7 +556,6 @@ fn main() -> Result<()> {
 
         let floating = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
         let host = create_window(w!("CairnHost"), WS_EX_TOOLWINDOW)?;
-        let tab_hwnd = create_window(w!("CairnTab"), floating | WS_EX_NOACTIVATE)?;
         let stack_hwnd = create_window(w!("CairnStack"), floating)?;
 
         let gfx = Gfx::new()?;
@@ -478,7 +565,8 @@ fn main() -> Result<()> {
             theme: Theme::system(),
             animations: animations_enabled(),
             host,
-            tab: edgetab::EdgeTab::new(tab_hwnd),
+            tabs: Vec::new(),
+            active_tab: 0,
             stack: shelf::Shelf::load(),
             stack_view: stackview::StackView::new(stack_hwnd),
             settings: Settings::load(),
@@ -498,9 +586,7 @@ fn main() -> Result<()> {
         app.hotkey = chosen.map(|i| settings::HOTKEYS[i].label);
 
         tray_add(app);
-        edgetab::position(app);
-        edgetab::show(app);
-        let _ = dnd::register(tab_hwnd, dnd::Zone::Tab);
+        edgetab::sync(app);
         let _ = dnd::register(stack_hwnd, dnd::Zone::Stack);
         SetTimer(host, FULLSCREEN_TIMER, 1000, None);
         match chosen {
