@@ -40,6 +40,9 @@ const FULLSCREEN_TIMER: usize = 1;
 const PASTE_TIMER: usize = 2;
 const UNDO_TIMER: usize = 3;
 const UNDO_MS: u32 = 10_000;
+const SPRING_TIMER: usize = 4;
+const SPRING_MS: u32 = 500;
+const DRAG_CLOSE_TIMER: usize = 5;
 
 const CMD_OPEN: u32 = 1;
 const CMD_RUN_AT_LOGIN: u32 = 2;
@@ -218,17 +221,55 @@ pub fn on_drag_hover(zone: dnd::Zone, over: bool) {
                 }
                 edgetab::set_drag_over(app, i, over);
             }
+            unsafe {
+                if over {
+                    // Resting on the tab opens the stack, so the drop can go
+                    // into a stack of the user's choice.
+                    SetTimer(app.host, SPRING_TIMER, SPRING_MS, None);
+                    let _ = KillTimer(app.host, DRAG_CLOSE_TIMER);
+                } else {
+                    let _ = KillTimer(app.host, SPRING_TIMER);
+                    close_drag_stack_soon(app, 400);
+                }
+            }
         }
         dnd::Zone::Stack => {
             app.stack_view.drop_hover = over;
             stackview::render(app);
+            if over {
+                unsafe {
+                    let _ = KillTimer(app.host, DRAG_CLOSE_TIMER);
+                }
+            } else {
+                close_drag_stack_soon(app, 400);
+            }
         }
         dnd::Zone::Near => nearzone::set_hover(app, over),
     }
 }
 
+/// The drag moved: over the stack, pointing at a stack name switches to it.
+pub fn on_drag_move(zone: dnd::Zone, pt: POINT) {
+    let Some(app) = app() else { return };
+    if zone == dnd::Zone::Stack && app.stack_view.open {
+        stackview::drag_over(app, pt);
+    }
+}
+
+/// A stack opened by a drag closes by itself once the drag is gone.
+fn close_drag_stack_soon(app: &App, ms: u32) {
+    if app.stack_view.dragging_in {
+        unsafe {
+            SetTimer(app.host, DRAG_CLOSE_TIMER, ms, None);
+        }
+    }
+}
+
 pub fn on_drop(zone: dnd::Zone, dropped: shelf::Dropped) {
     let Some(app) = app() else { return };
+    unsafe {
+        let _ = KillTimer(app.host, SPRING_TIMER);
+    }
     let added = app.stack.add(dropped);
     if added > 0 {
         app.stack.save();
@@ -246,6 +287,8 @@ pub fn on_drop(zone: dnd::Zone, dropped: shelf::Dropped) {
     if app.stack_view.open {
         stackview::refresh(app);
     }
+    // Leave the new item in view for a moment before closing.
+    close_drag_stack_soon(app, 900);
 }
 
 /// USB sticks, card readers, discs and network shares: files there may be
@@ -608,6 +651,23 @@ fn host_handle(app: &mut App, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Optio
             NIN_BALLOONUSERCLICK if !app.cleared.is_empty() => undo_clear(app),
             _ => {}
         },
+        WM_TIMER if wparam.0 == SPRING_TIMER => {
+            unsafe {
+                let _ = KillTimer(app.host, SPRING_TIMER);
+            }
+            if edgetab::is_drag_over(app, app.active_tab) {
+                stackview::open_for_drag(app);
+            }
+        }
+        WM_TIMER if wparam.0 == DRAG_CLOSE_TIMER => {
+            unsafe {
+                let _ = KillTimer(app.host, DRAG_CLOSE_TIMER);
+            }
+            let still_dragging = app.stack_view.drop_hover || (0..app.tabs.len()).any(|i| edgetab::is_drag_over(app, i));
+            if app.stack_view.dragging_in && !still_dragging {
+                stackview::close(app, false);
+            }
+        }
         WM_TIMER if wparam.0 == UNDO_TIMER => {
             unsafe {
                 let _ = KillTimer(app.host, UNDO_TIMER);

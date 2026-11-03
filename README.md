@@ -45,7 +45,7 @@ To start Cairn with Windows, right-click the tray icon and turn on "Run at login
 
 ## Usage
 
-Drag something to the right edge of the screen. A drop zone appears; let go and the item is in your stack.
+Drag something to the right edge of the screen. A drop zone appears; let go and the item is in your stack. Hold it on the drop zone for a moment instead and the stack opens, so you can point at a stack's name and drop it there.
 
 | Action | How |
 |---|---|
@@ -59,6 +59,7 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Clear the stack | Tray menu, then "Clear stack" (undo within 10 seconds) |
 | New stack | The + next to the stack names, or <kbd>Ctrl</kbd>+<kbd>N</kbd> |
 | Switch stacks | Click a name, or <kbd>Ctrl</kbd>+<kbd>Tab</kbd> |
+| Drop into a particular stack | Hold the drag on the edge tab until the stack opens, point at the stack's name, and let go over the stack |
 | Rename or delete a stack | Double-click its name or press <kbd>F2</kbd> to rename; right-click it for both |
 | Close the stack | <kbd>Esc</kbd> |
 | Move the tab | Drag it up or down the edge |

@@ -159,9 +159,12 @@ impl IDropTarget_Impl for DropTarget_Impl {
         Ok(())
     }
 
-    fn DragOver(&self, _: MODIFIERKEYS_FLAGS, _: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragOver(&self, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe {
             *effect = if self.accept.get() { choose_effect(*effect) } else { DROPEFFECT_NONE };
+        }
+        if self.accept.get() {
+            crate::on_drag_move(self.zone, POINT { x: pt.x, y: pt.y });
         }
         Ok(())
     }

@@ -44,6 +44,8 @@ pub struct StackView {
     pub hwnd: HWND,
     pub open: bool,
     pub drop_hover: bool,
+    /// Opened by a drag resting on the edge tab; closes on its own.
+    pub dragging_in: bool,
     /// The keyboard cursor; also where Enter acts.
     focus: usize,
     sel: Selection,
@@ -98,6 +100,7 @@ impl StackView {
             hwnd,
             open: false,
             drop_hover: false,
+            dragging_in: false,
             focus: 0,
             sel: Selection::default(),
             scroll: 0,
@@ -118,9 +121,9 @@ impl StackView {
     }
 }
 
-/// Grid cells: one per item plus the drop tile at the end.
+/// Grid cells: one per item.
 fn cells(app: &App) -> usize {
-    app.stack.items.len() + 1
+    app.stack.items.len()
 }
 
 fn ids(app: &App) -> Vec<u64> {
@@ -218,7 +221,23 @@ pub fn render(app: &mut App) {
         let (cx, cy) = (PAD, PAD);
         p.rect_shadow(cx, cy + 8.0, CARD_W, CARD_H, 8.0, 24.0, 0.55 * t.shadow);
         p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.surface_flyout);
-        p.stroke_rounded(cx + 0.5, cy + 0.5, CARD_W - 1.0, CARD_H - 1.0, 8.0, 1.0, t.outline);
+        if v.drop_hover {
+            // The whole stack is the drop target. An opaque base keeps the
+            // window behind from showing through the tint.
+            p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.surface);
+            p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.primary_subtle);
+            p.stroke_rounded_dashed(cx + 0.75, cy + 0.75, CARD_W - 1.5, CARD_H - 1.5, 8.0, 1.5, t.primary);
+        } else {
+            p.stroke_rounded(cx + 0.5, cy + 0.5, CARD_W - 1.0, CARD_H - 1.0, 8.0, 1.0, t.outline);
+        }
+        if items.is_empty() {
+            if let Some(f) = &name_fmt {
+                p.text("Nothing here yet", f, cx, cy + GRID_Y + GRID_H / 2.0 - 22.0, CARD_W, 20.0, t.text);
+            }
+            if let Some(f) = &caption {
+                p.text("Drag files, text or links onto the edge tab or here", f, cx, cy + GRID_Y + GRID_H / 2.0, CARD_W, 16.0, t.text_secondary);
+            }
+        }
         for (i, &(hx, hw)) in v.heads.iter().enumerate().filter(|(_, h)| h.1 > 0.0) {
             let current = i == app.stack.current;
             if current {
@@ -241,23 +260,9 @@ pub fn render(app: &mut App) {
             p.text(&count, f, cx + CARD_W - M - COUNT_W, cy + M, COUNT_W, 28.0, t.text_secondary);
         }
 
-        for i in 0..items.len() + 1 {
+        for i in 0..items.len() {
             let Some((tx, ty)) = cell_pos(i, v.scroll) else { continue };
             let (tx, ty) = (cx + tx, cy + ty);
-            if i == items.len() {
-                // Drop tile.
-                if v.drop_hover {
-                    p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, t.primary_subtle);
-                }
-                p.stroke_rounded_dashed(tx + 0.75, ty + 0.75, TILE_W - 1.5, TILE_H - 1.5, 8.0, 1.5, t.primary);
-                if let Some(f) = &icon32 {
-                    p.text(GLYPH_ADD, f, tx, ty + 10.0, TILE_W, 36.0, t.text_secondary);
-                }
-                if let Some(f) = &caption {
-                    p.text("Drop here", f, tx, ty + 52.0, TILE_W, 20.0, t.text_secondary);
-                }
-                continue;
-            }
             let item = &items[i];
             let hovered = v.hover == Some(i);
             p.rect_shadow(tx, ty + 1.0, TILE_W, TILE_H, 8.0, 2.0, 0.4 * t.shadow);
@@ -302,7 +307,7 @@ pub fn render(app: &mut App) {
             }
         }
 
-        let total_rows = (items.len() + 1).div_ceil(COLS);
+        let total_rows = items.len().div_ceil(COLS);
         if total_rows > ROWS {
             let thumb = (GRID_H * ROWS as f32 / total_rows as f32).max(16.0);
             let top = (GRID_H - thumb) * v.scroll as f32 / (total_rows - ROWS) as f32;
@@ -311,6 +316,9 @@ pub fn render(app: &mut App) {
         p.fill_rect(cx, cy + FOOTER_Y - 4.0, CARD_W, 1.0, t.divider);
         if let Some(f) = &caption_lead {
             let hint = match v.sel.len() {
+                _ if v.drop_hover && app.stack.names.len() > 1 => format!("Drop to add to {}     Point at another name to switch", app.stack.names[app.stack.current]),
+                _ if v.drop_hover => format!("Drop to add to {}", app.stack.names[app.stack.current]),
+                _ if v.dragging_in => "Move onto the stack to drop here".to_string(),
                 n if n > 1 => format!("{n} selected     Drag out to use     Del remove     Right-click for more"),
                 _ => "Drag out to use     Enter open     Del remove     Right-click for more".to_string(),
             };
@@ -570,10 +578,15 @@ fn head_menu(app: &mut App, stack: usize, at: POINT) {
 }
 
 fn hit_head(app: &App, lparam: LPARAM) -> Option<Head> {
-    let v = &app.stack_view;
-    let s = v.dpi as f32 / 96.0;
+    let s = app.stack_view.dpi as f32 / 96.0;
     let x = (lparam.0 & 0xffff) as i16 as f32 / s - PAD;
     let y = ((lparam.0 >> 16) & 0xffff) as i16 as f32 / s - PAD;
+    head_at(app, x, y)
+}
+
+/// The header control at a point in card DIPs.
+fn head_at(app: &App, x: f32, y: f32) -> Option<Head> {
+    let v = &app.stack_view;
     if !(M..M + 28.0).contains(&y) {
         return None;
     }
@@ -581,6 +594,36 @@ fn hit_head(app: &App, lparam: LPARAM) -> Option<Head> {
         return Some(Head::Add);
     }
     v.heads.iter().position(|&(hx, hw)| hw > 0.0 && (hx..hx + hw).contains(&x)).map(Head::Stack)
+}
+
+/// Opens the stack while something is being dragged onto the edge tab,
+/// without taking focus from the app the drag came from.
+pub fn open_for_drag(app: &mut App) {
+    if app.stack_view.open {
+        return;
+    }
+    app.stack_view.target = unsafe { GetForegroundWindow() };
+    app.stack_view.editing = None;
+    app.stack_view.open = true;
+    app.stack_view.dragging_in = true;
+    reset_view(app);
+    place(app);
+    render(app);
+    unsafe {
+        let _ = ShowWindow(app.stack_view.hwnd, SW_SHOWNOACTIVATE);
+        let _ = SetWindowPos(app.stack_view.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
+/// A drag moving over the stack: pointing at another stack's name switches
+/// to it, so the drop lands there.
+pub fn drag_over(app: &mut App, pt: POINT) {
+    let v = &app.stack_view;
+    let s = v.dpi as f32 / 96.0;
+    let (x, y) = ((pt.x - v.origin.0) as f32 / s - PAD, (pt.y - v.origin.1) as f32 / s - PAD);
+    if let Some(Head::Stack(i)) = head_at(app, x, y) {
+        switch_stack(app, i);
+    }
 }
 
 /// The actions menu from the keyboard, at the focused tile.
@@ -653,6 +696,8 @@ pub fn close(app: &mut App, restore: bool) {
     // Clicking away keeps a name that was being typed.
     finish_rename(app, true);
     app.stack_view.open = false;
+    app.stack_view.dragging_in = false;
+    app.stack_view.drop_hover = false;
     app.stack_view.press = None;
     unsafe {
         let _ = ShowWindow(app.stack_view.hwnd, SW_HIDE);
@@ -668,7 +713,7 @@ pub fn refresh(app: &mut App) {
     let ids = ids(app);
     let v = &mut app.stack_view;
     v.sel.retain(&ids);
-    v.focus = v.focus.min(n.saturating_sub(2));
+    v.focus = v.focus.min(n.saturating_sub(1));
     let rows = n.div_ceil(COLS);
     v.scroll = v.scroll.min(rows.saturating_sub(ROWS));
     render(app);

@@ -2,6 +2,17 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-11-03
+
+### Added
+
+- Hold a drag on the edge tab for half a second and the stack opens beside it. Point at a stack's name to switch to it, then let go anywhere over the stack. The stack closes by itself afterwards. A quick drop on the tab still adds to the current stack.
+
+### Changed
+
+- The whole stack lights up when something is dragged over it, in place of the dashed "Drop here" tile.
+- An empty stack says how to add things.
+
 ## [0.4.0] - 2026-11-03
 
 ### Added
@@ -60,6 +71,7 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.4.1]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.1
 [0.4.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.2.0

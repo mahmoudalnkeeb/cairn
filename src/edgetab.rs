@@ -315,6 +315,10 @@ fn tick(app: &mut App, i: usize) {
     render(app, i);
 }
 
+pub fn is_drag_over(app: &App, i: usize) -> bool {
+    app.tabs.get(i).is_some_and(|t| t.drag_over)
+}
+
 pub fn set_drag_over(app: &mut App, i: usize, over: bool) {
     if let Some(t) = app.tabs.get_mut(i)
         && t.drag_over != over
