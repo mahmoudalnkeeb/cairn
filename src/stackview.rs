@@ -19,7 +19,7 @@ use crate::gfx::{Color, Gfx, Painter, Surface, Theme, Tween};
 use crate::select::Selection;
 use crate::shelf::{self, Kind, ShelfItem};
 use crate::settings::Edge;
-use crate::{App, a11y, actions, clipboard, dnd, dpi_at, edgetab};
+use crate::{App, a11y, actions, clipboard, dnd, dpi_at, edgetab, peek};
 
 const COLS: usize = 4;
 const ROWS: usize = 3;
@@ -164,12 +164,13 @@ impl StackView {
 }
 
 /// A transition's length, or none when Windows animations are off.
-fn ms(app: &App, ms: f32) -> f32 {
+pub fn ms(app: &App, ms: f32) -> f32 {
     if app.animations { ms } else { 0.0 }
 }
 
-/// Runs the animation timer until every transition has finished.
-fn animate(app: &mut App) {
+/// Runs the animation timer until every transition has finished. It also
+/// drives the peek card.
+pub fn animate(app: &mut App) {
     if app.animations {
         unsafe {
             SetTimer(app.stack_view.hwnd, ANIM_TIMER, 10, None);
@@ -180,6 +181,8 @@ fn animate(app: &mut App) {
 
 fn tick(app: &mut App) {
     render(app);
+    peek::tick(app);
+    let peek_done = app.peek.show.done();
     let v = &mut app.stack_view;
     if v.settle.done() {
         v.fresh.clear();
@@ -188,7 +191,7 @@ fn tick(app: &mut App) {
         v.lifted.clear();
     }
     let all = [v.show, v.drop_t, v.flash, v.settle, v.lift];
-    if all.iter().all(Tween::done) {
+    if all.iter().all(Tween::done) && peek_done {
         unsafe {
             let _ = KillTimer(v.hwnd, ANIM_TIMER);
         }
@@ -562,6 +565,18 @@ pub fn render(app: &mut App) {
     };
     let dx = ((1.0 - shown) * SLIDE * v.dpi as f32 / 96.0 * toward_tab).round() as i32;
     let _ = surf.present(v.hwnd, v.origin.0 + dx, v.origin.1, shown);
+    // The peek follows the focused tile.
+    if app.peek.open {
+        peek::render(app);
+    }
+}
+
+/// The stack card in screen pixels, and the DPI it is drawn at.
+pub fn card_rect(app: &App) -> (RECT, u32) {
+    let v = &app.stack_view;
+    let s = v.dpi as f32 / 96.0;
+    let (x, y) = (v.origin.0 + (PAD * s) as i32, v.origin.1 + (PAD * s) as i32);
+    (RECT { left: x, top: y, right: x + (CARD_W * s) as i32, bottom: y + (CARD_H * s) as i32 }, v.dpi)
 }
 
 pub fn open(app: &mut App, target: HWND) {
@@ -998,6 +1013,7 @@ pub fn close(app: &mut App, restore: bool) {
     }
     // Clicking away keeps a name that was being typed.
     finish_rename(app, true);
+    peek::close(app);
     let d = ms(app, CLOSE_MS);
     let v = &mut app.stack_view;
     v.open = false;
@@ -1216,7 +1232,9 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
             VK_F2 => start_rename(app),
             VK_APPS => focused_menu(app),
             VK_F10 if key_down(VK_SHIFT) => focused_menu(app),
+            VK_ESCAPE if app.peek.open => peek::close(app),
             VK_ESCAPE => close(app, true),
+            VK_SPACE => peek::toggle(app),
             VK_RIGHT => move_focus(app, 1),
             VK_LEFT => move_focus(app, -1),
             VK_DOWN => move_focus(app, COLS as isize),

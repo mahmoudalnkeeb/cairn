@@ -585,10 +585,16 @@ fn resolve(data: &[u8]) -> Option<PathBuf> {
 
 /// The shell's icon or thumbnail for a path, as premultiplied BGRA.
 pub fn shell_icon(path: &Path) -> Option<Thumb> {
+    shell_image(path, ICON_PX)
+}
+
+/// The shell's thumbnail or icon for a path, about `px` pixels on its
+/// longer side.
+pub fn shell_image(path: &Path, px: i32) -> Option<Thumb> {
     unsafe {
         let name = HSTRING::from(path.to_string_lossy().as_ref());
         let factory: IShellItemImageFactory = SHCreateItemFromParsingName(&name, None).ok()?;
-        let bitmap = factory.GetImage(SIZE { cx: ICON_PX, cy: ICON_PX }, SIIGBF_BIGGERSIZEOK).ok()?;
+        let bitmap = factory.GetImage(SIZE { cx: px, cy: px }, SIIGBF_BIGGERSIZEOK).ok()?;
         let mut bm = BITMAP::default();
         GetObjectW(bitmap, size_of::<BITMAP>() as i32, Some(&mut bm as *mut BITMAP as *mut _));
         let (w, h) = (bm.bmWidth, bm.bmHeight.abs());

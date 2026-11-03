@@ -58,6 +58,7 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Select | Click, <kbd>Ctrl</kbd>+click, <kbd>Shift</kbd>+click, arrow keys, <kbd>Ctrl</kbd>+<kbd>A</kbd> |
 | Use items | Drag them out of the stack |
 | Open or paste | Double-click or <kbd>Enter</kbd> |
+| Take a closer look | <kbd>Space</kbd> shows the item larger beside the stack; <kbd>Space</kbd> or <kbd>Esc</kbd> closes it |
 | More actions | Right-click, or the <kbd>Menu</kbd> key |
 | Add the clipboard | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>, or "Add clipboard to stack" in the tray menu |
 | Remove | <kbd>Del</kbd>, or the × on a tile |

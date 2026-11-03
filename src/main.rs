@@ -11,6 +11,7 @@ mod dnd;
 mod edgetab;
 mod gfx;
 mod nearzone;
+mod peek;
 mod select;
 mod settings;
 mod shelf;
@@ -75,6 +76,7 @@ pub struct App {
     pub stack: shelf::Shelf,
     pub stack_view: stackview::StackView,
     pub near: nearzone::NearZone,
+    pub peek: peek::Peek,
     pub settings: Settings,
     /// What "Clear stack" took, while it can still be undone.
     cleared: Vec<shelf::ShelfItem>,
@@ -758,6 +760,7 @@ fn main() -> Result<()> {
         let host = create_window(w!("CairnHost"), WS_EX_TOOLWINDOW)?;
         let stack_hwnd = create_window(w!("CairnStack"), floating)?;
         let near_hwnd = create_window(w!("CairnNear"), floating | WS_EX_NOACTIVATE)?;
+        let peek_hwnd = create_window(w!("CairnPeek"), floating | WS_EX_NOACTIVATE)?;
 
         let gfx = Gfx::new()?;
         let tray_icon = make_tray_icon(&gfx);
@@ -771,6 +774,7 @@ fn main() -> Result<()> {
             stack: shelf::Shelf::load(),
             stack_view: stackview::StackView::new(stack_hwnd),
             near: nearzone::NearZone::new(near_hwnd),
+            peek: peek::Peek::new(peek_hwnd),
             settings: Settings::load(),
             cleared: Vec::new(),
             hotkey: None,

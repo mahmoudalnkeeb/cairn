@@ -13,6 +13,7 @@ All notable changes to Cairn are listed here. Versions follow [Semantic Versioni
 - A color such as `#3b82f6`, `rgb()` or `hsl()` shows as a swatch. Right-click it to copy it as hex, RGB or HSL.
 - Code and commands show in Cascadia Mono, named by their first line. If Cairn guesses wrong, right-click for "Show as text" or "Show as code".
 - An email address or phone number gets its own tile. Double-click to start a message or a call.
+- Press Space on an item to take a closer look: a larger picture of a file, the whole text, or a color in hex, RGB and HSL, in a card beside the stack. The arrow keys move through the stack and the card follows. Space or Esc closes it.
 - A file moved to another folder on the same drive is found again when you open it from the stack.
 - "Find file…" on a missing file's right-click menu, to point the item at where the file is now.
 
