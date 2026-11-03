@@ -23,6 +23,9 @@
 - Drag files, folders, text or links to the edge of the screen to keep them in your stack.
 - Open the stack from the edge, the tray icon or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>, and drag items into any app that accepts drops: Explorer, browsers, email, chat.
 - Select several items and drag them out in one go, even files from different folders.
+- Keep separate stacks for separate jobs, shown as tabs at the top of the stack.
+- Right-click items to copy their paths, copy them as Markdown links, save them as a zip, copy them to a folder or move them to another stack.
+- Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> to add whatever is on the clipboard.
 - Open a file or link with a double-click. A text item pastes into the app you came from.
 - Your stack stays until you remove it, including after a restart.
 - Cairn keeps references to your files. It never moves or copies them.
@@ -49,8 +52,13 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Select | Click, <kbd>Ctrl</kbd>+click, <kbd>Shift</kbd>+click, arrow keys, <kbd>Ctrl</kbd>+<kbd>A</kbd> |
 | Use items | Drag them out of the stack |
 | Open or paste | Double-click or <kbd>Enter</kbd> |
+| More actions | Right-click, or the <kbd>Menu</kbd> key |
+| Add the clipboard | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>, or "Add clipboard to stack" in the tray menu |
 | Remove | <kbd>Del</kbd>, or the × on a tile |
-| Clear everything | Tray menu, then "Clear stack" (undo within 10 seconds) |
+| Clear the stack | Tray menu, then "Clear stack" (undo within 10 seconds) |
+| New stack | The + next to the stack names, or <kbd>Ctrl</kbd>+<kbd>N</kbd> |
+| Switch stacks | Click a name, or <kbd>Ctrl</kbd>+<kbd>Tab</kbd> |
+| Rename or delete a stack | Double-click its name or press <kbd>F2</kbd> to rename; right-click it for both |
 | Close the stack | <kbd>Esc</kbd> |
 | Move the tab | Drag it up or down the edge |
 
@@ -79,9 +87,9 @@ Planned next:
 
 Ideas for later:
 
-- [ ] Several named stacks, shown as tabs
-- [ ] Actions on a selection: zip, copy paths, copy as Markdown links, send to a folder
-- [ ] A shortcut that adds the clipboard to the stack
+- [x] Several named stacks, shown as tabs (0.3)
+- [x] Actions on a selection: zip, copy paths, copy as Markdown links, send to a folder (0.3)
+- [x] A shortcut that adds the clipboard to the stack (0.3)
 - [ ] Show the stack near the cursor while dragging (opt-in)
 - [ ] Keep a full copy of image items, for screenshots that only existed in another app
 - [ ] Optionally copy files from removable or network drives into Cairn

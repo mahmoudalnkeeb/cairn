@@ -77,8 +77,8 @@ impl IAccessible_Impl for StackAccessible_Impl {
         let app = crate::app_ref().ok_or(Error::from(E_FAIL))?;
         Ok(match item(v)? {
             None => {
-                let n = app.stack.items.len();
-                BSTR::from(if n == 1 { "Stack, 1 item".to_string() } else { format!("Stack, {n} items") })
+                let (n, name) = (app.stack.items.len(), &app.stack.names[app.stack.current]);
+                BSTR::from(if n == 1 { format!("{name}, 1 item") } else { format!("{name}, {n} items") })
             }
             Some(i) => {
                 let kind = &app.stack.items[i].kind;

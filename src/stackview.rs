@@ -17,7 +17,7 @@ use crate::gfx::Surface;
 use crate::select::Selection;
 use crate::shelf::{self, Kind};
 use crate::settings::Edge;
-use crate::{App, a11y, clipboard, dnd, dpi_at, edgetab};
+use crate::{App, a11y, actions, clipboard, dnd, dpi_at, edgetab};
 
 const COLS: usize = 4;
 const ROWS: usize = 3;
@@ -58,7 +58,39 @@ pub struct StackView {
     origin: (i32, i32),
     surface: Option<Surface>,
     pub target: HWND,
+    /// Stack tabs in the header as (x, width) in card DIPs, from the last
+    /// render, and the x of the "+" button.
+    heads: Vec<(f32, f32)>,
+    add_x: f32,
+    last_head_click: Option<(usize, Instant)>,
+    /// The current stack's name while it is being renamed. `fresh` means the
+    /// first key typed replaces it.
+    editing: Option<(String, bool)>,
 }
+
+#[derive(Clone, Copy, PartialEq)]
+enum Head {
+    Stack(usize),
+    Add,
+}
+
+const HEAD_PAD: f32 = 10.0;
+const HEAD_GAP: f32 = 4.0;
+const ADD_W: f32 = 28.0;
+const COUNT_W: f32 = 64.0;
+
+// Tile menu.
+const A_OPEN: u32 = 1;
+const A_COPY_PATHS: u32 = 2;
+const A_COPY_MD: u32 = 3;
+const A_ZIP: u32 = 4;
+const A_COPY_TO: u32 = 5;
+const A_REMOVE: u32 = 6;
+const A_MOVE_BASE: u32 = 100;
+// Stack tab menu.
+const H_RENAME: u32 = 1;
+const H_DELETE: u32 = 2;
+const H_NEW: u32 = 3;
 
 impl StackView {
     pub fn new(hwnd: HWND) -> StackView {
@@ -78,6 +110,10 @@ impl StackView {
             origin: (0, 0),
             surface: None,
             target: HWND::default(),
+            heads: Vec::new(),
+            add_x: 0.0,
+            last_head_click: None,
+            editing: None,
         }
     }
 }
@@ -98,6 +134,14 @@ fn cell_pos(index: usize, scroll: usize) -> Option<(f32, f32)> {
     }
     let col = index % COLS;
     Some((M + col as f32 * (TILE_W + GAP), GRID_Y + (row - scroll) as f32 * (TILE_H + GAP)))
+}
+
+/// A stack tab's text: its name, or the name being typed with a caret.
+fn head_label(app: &App, i: usize, name: &str) -> String {
+    match &app.stack_view.editing {
+        Some((text, _)) if i == app.stack.current => format!("{text}|"),
+        _ => name.to_string(),
+    }
 }
 
 /// Opens beside the edge tab, on the screen side of it.
@@ -139,11 +183,29 @@ pub fn render(app: &mut App) {
         }
     }
 
+    // Lay out the stack tabs: each name in a pill, then "+", leaving room
+    // for the item count. Tabs that do not fit are reached with Ctrl+Tab.
+    let head_fmt = app.gfx.text_format_aligned(&app.gfx.ui_font, 14.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER).ok();
+    // A tab that does not fit gets zero width, so indexes match names.
+    let mut heads = Vec::new();
+    let mut x = M;
+    let room = CARD_W - M - COUNT_W - ADD_W - HEAD_GAP;
+    for (i, name) in app.stack.names.iter().enumerate() {
+        let w = head_fmt.as_ref().map_or(60.0, |f| app.gfx.text_width(&head_label(app, i, name), f)).min(160.0) + HEAD_PAD * 2.0;
+        if x + w > room && i != app.stack.current {
+            heads.push((0.0, 0.0));
+            continue;
+        }
+        heads.push((x, w));
+        x += w + HEAD_GAP;
+    }
+    app.stack_view.heads = heads;
+    app.stack_view.add_x = x;
+
     let v = &app.stack_view;
     let Some(surf) = &v.surface else { return };
     let (g, t) = (&app.gfx, &app.theme);
     let fmt = |family, size, weight, align| g.text_format_aligned(family, size, weight, align).ok();
-    let title = fmt(&g.display_font, 20.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING);
     let name_fmt = fmt(&g.ui_font, 14.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER);
     let caption = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     let caption_lead = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -157,13 +219,26 @@ pub fn render(app: &mut App) {
         p.rect_shadow(cx, cy + 8.0, CARD_W, CARD_H, 8.0, 24.0, 0.55 * t.shadow);
         p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.surface_flyout);
         p.stroke_rounded(cx + 0.5, cy + 0.5, CARD_W - 1.0, CARD_H - 1.0, 8.0, 1.0, t.outline);
-        if let Some(f) = &title {
-            p.text("Stack", f, cx + M, cy + M, 200.0, 28.0, t.text);
+        for (i, &(hx, hw)) in v.heads.iter().enumerate().filter(|(_, h)| h.1 > 0.0) {
+            let current = i == app.stack.current;
+            if current {
+                p.fill_rounded(cx + hx, cy + M, hw, 28.0, 6.0, t.surface);
+            }
+            if current && v.editing.is_some() {
+                p.stroke_rounded(cx + hx + 0.5, cy + M + 0.5, hw - 1.0, 27.0, 6.0, 1.0, t.primary);
+            }
+            if let Some(f) = &head_fmt {
+                let color = if current { t.text } else { t.text_secondary };
+                p.text(&head_label(app, i, &app.stack.names[i]), f, cx + hx + HEAD_PAD, cy + M + 4.0, hw - HEAD_PAD * 2.0, 20.0, color);
+            }
+        }
+        if let Some(f) = &icon12 {
+            p.text(GLYPH_ADD, f, cx + v.add_x, cy + M + 8.0, ADD_W, 14.0, t.text_secondary);
         }
         if let Some(f) = &caption_end {
             let n = items.len();
             let count = if n == 1 { "1 item".to_string() } else { format!("{n} items") };
-            p.text(&count, f, cx + CARD_W - M - 120.0, cy + M, 120.0, 28.0, t.text_secondary);
+            p.text(&count, f, cx + CARD_W - M - COUNT_W, cy + M, COUNT_W, 28.0, t.text_secondary);
         }
 
         for i in 0..items.len() + 1 {
@@ -236,8 +311,8 @@ pub fn render(app: &mut App) {
         p.fill_rect(cx, cy + FOOTER_Y - 4.0, CARD_W, 1.0, t.divider);
         if let Some(f) = &caption_lead {
             let hint = match v.sel.len() {
-                n if n > 1 => format!("{n} selected     Drag out to use     Del remove     Esc close"),
-                _ => "Drag out to use     Enter open     Del remove     Esc close".to_string(),
+                n if n > 1 => format!("{n} selected     Drag out to use     Del remove     Right-click for more"),
+                _ => "Drag out to use     Enter open     Del remove     Right-click for more".to_string(),
             };
             p.text(&hint, f, cx + M, cy + FOOTER_Y, CARD_W - M * 2.0, 16.0, t.text_secondary);
         }
@@ -247,6 +322,7 @@ pub fn render(app: &mut App) {
 
 pub fn open(app: &mut App, target: HWND) {
     app.stack_view.target = target;
+    app.stack_view.editing = None;
     app.stack_view.open = true;
     app.stack_view.focus = 0;
     let ids = ids(app);
@@ -260,6 +336,270 @@ pub fn open(app: &mut App, target: HWND) {
         let _ = SetForegroundWindow(app.stack_view.hwnd);
     }
     announce(app);
+}
+
+/// Back to the first tile, selected, after the stack's contents change.
+fn reset_view(app: &mut App) {
+    let ids = ids(app);
+    let v = &mut app.stack_view;
+    v.focus = 0;
+    v.sel.only(&ids, 0);
+    v.scroll = 0;
+    v.hover = None;
+}
+
+pub fn switch_stack(app: &mut App, stack: usize) {
+    if stack == app.stack.current || stack >= app.stack.names.len() {
+        return;
+    }
+    finish_rename(app, true);
+    app.stack.switch(stack);
+    app.stack.save();
+    reset_view(app);
+    render(app);
+    announce(app);
+}
+
+fn cycle_stack(app: &mut App, delta: isize) {
+    let n = app.stack.names.len() as isize;
+    let next = (app.stack.current as isize + delta).rem_euclid(n) as usize;
+    switch_stack(app, next);
+}
+
+fn new_stack(app: &mut App) {
+    finish_rename(app, true);
+    app.stack.new_stack();
+    app.stack.save();
+    reset_view(app);
+    start_rename(app);
+}
+
+fn start_rename(app: &mut App) {
+    let name = app.stack.names[app.stack.current].clone();
+    app.stack_view.editing = Some((name, true));
+    render(app);
+}
+
+fn finish_rename(app: &mut App, commit: bool) {
+    if let Some((text, _)) = app.stack_view.editing.take() {
+        if commit {
+            app.stack.rename(app.stack.current, &text);
+            app.stack.save();
+        }
+        render(app);
+    }
+}
+
+/// Typing while a stack is being renamed. Returns false for keys it leaves
+/// alone.
+fn edit_key(app: &mut App, vk: VIRTUAL_KEY) -> bool {
+    match vk {
+        VK_RETURN => finish_rename(app, true),
+        VK_ESCAPE => finish_rename(app, false),
+        VK_BACK => {
+            if let Some((text, fresh)) = &mut app.stack_view.editing {
+                if *fresh {
+                    text.clear();
+                } else {
+                    text.pop();
+                }
+                *fresh = false;
+            }
+            render(app);
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn edit_char(app: &mut App, c: char) {
+    if let Some((text, fresh)) = &mut app.stack_view.editing
+        && !c.is_control()
+    {
+        if *fresh {
+            text.clear();
+            *fresh = false;
+        }
+        if text.chars().count() < 40 {
+            text.push(c);
+        }
+        render(app);
+    }
+}
+
+/// Deletes a stack after the user picked it from the menu. Its items can be
+/// brought back for 10 seconds, into whichever stack is current then.
+fn delete_stack(app: &mut App, stack: usize) {
+    finish_rename(app, false);
+    let name = app.stack.names[stack].clone();
+    let Some(items) = app.stack.delete_stack(stack) else { return };
+    app.stack.save();
+    reset_view(app);
+    render(app);
+    announce(app);
+    if !items.is_empty() {
+        crate::offer_undo(app, items, &format!("Deleted \"{name}\""));
+    }
+}
+
+/// The selected items, or the focused one if nothing is selected.
+fn chosen(app: &App) -> Vec<u64> {
+    let mut ids = app.stack_view.sel.ordered(&ids(app));
+    if ids.is_empty() {
+        ids.extend(app.stack.items.get(app.stack_view.focus).map(|i| i.id));
+    }
+    ids
+}
+
+fn popup(owner: HWND, menu: HMENU, at: POINT) -> u32 {
+    unsafe {
+        let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, at.x, at.y, 0, owner, None);
+        let _ = DestroyMenu(menu);
+        cmd.0 as u32
+    }
+}
+
+/// The actions menu for the selection.
+fn tile_menu(app: &mut App, at: POINT) {
+    let ids = chosen(app);
+    if ids.is_empty() {
+        return;
+    }
+    // Copy what the actions need now: the menu and dialogs below can close
+    // the flyout or change the stack.
+    let (text_paths, text_md, files, refs, first_is_text) = {
+        let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| ids.contains(&i.id)).map(|i| &i.kind).collect();
+        let refs = kinds.iter().any(|k| !matches!(k, Kind::Text(_)));
+        (actions::paths_text(&kinds), actions::markdown(&kinds), actions::existing_files(&kinds), refs, matches!(kinds[0], Kind::Text(_)))
+    };
+    let one = ids.len() == 1;
+    let has_files = !files.is_empty();
+    let menu = unsafe {
+        let Ok(menu) = CreatePopupMenu() else { return };
+        let on = |b: bool| if b { MF_ENABLED } else { MF_GRAYED };
+        if one {
+            let open = if first_is_text { w!("Paste") } else { w!("Open") };
+            let _ = AppendMenuW(menu, MF_STRING, A_OPEN as usize, open);
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        }
+        let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_PATHS as usize, if one { w!("Copy path") } else { w!("Copy paths") });
+        let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_MD as usize, w!("Copy as Markdown link"));
+        let _ = AppendMenuW(menu, MF_STRING | on(has_files), A_ZIP as usize, w!("Save as zip…"));
+        let _ = AppendMenuW(menu, MF_STRING | on(has_files), A_COPY_TO as usize, w!("Copy to folder…"));
+        if app.stack.names.len() > 1
+            && let Ok(stacks) = CreatePopupMenu()
+        {
+            for (i, name) in app.stack.names.iter().enumerate().filter(|&(i, _)| i != app.stack.current) {
+                let _ = AppendMenuW(stacks, MF_STRING, A_MOVE_BASE as usize + i, &HSTRING::from(name.as_str()));
+            }
+            let _ = AppendMenuW(menu, MF_POPUP, stacks.0 as usize, w!("Move to stack"));
+        }
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_STRING, A_REMOVE as usize, w!("Remove"));
+        menu
+    };
+    match popup(app.stack_view.hwnd, menu, at) {
+        A_OPEN => activate(app, app.stack.items.iter().position(|i| i.id == ids[0]).unwrap_or(0)),
+        A_COPY_PATHS => copy_text(app, &text_paths, if one { "Path copied" } else { "Paths copied" }),
+        A_COPY_MD => copy_text(app, &text_md, "Markdown copied"),
+        A_ZIP => {
+            close(app, false);
+            if let Some(out) = actions::pick_zip(HWND::default(), &files[0]) {
+                app.zip_out = Some(out.clone());
+                actions::zip(files, out, app.host);
+            }
+        }
+        A_COPY_TO => {
+            close(app, false);
+            if let Some(folder) = actions::pick_folder(HWND::default()) {
+                actions::copy_to(HWND::default(), &files, &folder);
+            }
+        }
+        A_REMOVE => remove_selected(app),
+        c if c >= A_MOVE_BASE && ((c - A_MOVE_BASE) as usize) < app.stack.names.len() => {
+            let dest = (c - A_MOVE_BASE) as usize;
+            let moved = app.stack.move_to(&ids, dest);
+            app.stack.save();
+            let n = ids.len();
+            refresh(app);
+            reset_view(app);
+            render(app);
+            announce(app);
+            let name = &app.stack.names[dest];
+            let note = match (moved, n) {
+                (1, 1) => format!("Moved to {name}"),
+                (m, n) if m == n => format!("Moved {m} items to {name}"),
+                (m, _) => format!("Moved {m} to {name}; the rest were already there"),
+            };
+            crate::notify(app, "Cairn", &note);
+        }
+        _ => {}
+    }
+}
+
+fn copy_text(app: &mut App, text: &str, done: &str) {
+    if clipboard::write_text(app.host, text) {
+        crate::notify(app, done, &shelf::preview(text));
+    }
+}
+
+/// The menu for a stack's tab.
+fn head_menu(app: &mut App, stack: usize, at: POINT) {
+    switch_stack(app, stack);
+    let n = app.stack.count(stack);
+    let menu = unsafe {
+        let Ok(menu) = CreatePopupMenu() else { return };
+        let _ = AppendMenuW(menu, MF_STRING, H_RENAME as usize, w!("Rename\tF2"));
+        let _ = AppendMenuW(menu, MF_STRING, H_NEW as usize, w!("New stack\tCtrl+N"));
+        let delete = match n {
+            0 => "Delete stack".to_string(),
+            1 => "Delete stack and its item".to_string(),
+            n => format!("Delete stack and its {n} items"),
+        };
+        let last = if app.stack.names.len() < 2 { MF_GRAYED } else { MF_ENABLED };
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_STRING | last, H_DELETE as usize, &HSTRING::from(delete));
+        menu
+    };
+    match popup(app.stack_view.hwnd, menu, at) {
+        H_RENAME => start_rename(app),
+        H_NEW => new_stack(app),
+        H_DELETE => delete_stack(app, stack),
+        _ => {}
+    }
+}
+
+fn hit_head(app: &App, lparam: LPARAM) -> Option<Head> {
+    let v = &app.stack_view;
+    let s = v.dpi as f32 / 96.0;
+    let x = (lparam.0 & 0xffff) as i16 as f32 / s - PAD;
+    let y = ((lparam.0 >> 16) & 0xffff) as i16 as f32 / s - PAD;
+    if !(M..M + 28.0).contains(&y) {
+        return None;
+    }
+    if (v.add_x..v.add_x + ADD_W).contains(&x) {
+        return Some(Head::Add);
+    }
+    v.heads.iter().position(|&(hx, hw)| hw > 0.0 && (hx..hx + hw).contains(&x)).map(Head::Stack)
+}
+
+/// The actions menu from the keyboard, at the focused tile.
+fn focused_menu(app: &mut App) {
+    let focus = app.stack_view.focus;
+    if let Some(r) = tile_screen_rect(app, focus) {
+        if !is_selected(app, focus) {
+            take_focus(app, focus);
+        }
+        tile_menu(app, POINT { x: r.left + 16, y: r.bottom - 16 });
+    }
+}
+
+fn cursor() -> POINT {
+    let mut pt = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut pt);
+    }
+    pt
 }
 
 /// Tells screen readers which tile has the keyboard focus.
@@ -310,6 +650,8 @@ pub fn close(app: &mut App, restore: bool) {
     if !app.stack_view.open {
         return;
     }
+    // Clicking away keeps a name that was being typed.
+    finish_rename(app, true);
     app.stack_view.open = false;
     app.stack_view.press = None;
     unsafe {
@@ -466,8 +808,23 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
     if !app.stack_view.open {
         return None;
     }
+    let vk = VIRTUAL_KEY(wparam.0 as u16);
+    if msg == WM_KEYDOWN && app.stack_view.editing.is_some() && edit_key(app, vk) {
+        return Some(LRESULT(0));
+    }
     match msg {
-        WM_KEYDOWN => match VIRTUAL_KEY(wparam.0 as u16) {
+        WM_CHAR => {
+            if let Some(c) = char::from_u32(wparam.0 as u32) {
+                edit_char(app, c);
+            }
+        }
+        WM_KEYDOWN if app.stack_view.editing.is_some() => {}
+        WM_KEYDOWN => match vk {
+            VK_TAB if key_down(VK_CONTROL) => cycle_stack(app, if key_down(VK_SHIFT) { -1 } else { 1 }),
+            VK_N if key_down(VK_CONTROL) => new_stack(app),
+            VK_F2 => start_rename(app),
+            VK_APPS => focused_menu(app),
+            VK_F10 if key_down(VK_SHIFT) => focused_menu(app),
             VK_ESCAPE => close(app, true),
             VK_RIGHT => move_focus(app, 1),
             VK_LEFT => move_focus(app, -1),
@@ -522,6 +879,35 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
                     let _ = GetCursorPos(&mut pt);
                 }
                 app.stack_view.press = Some((i, pt));
+            }
+        }
+        WM_RBUTTONUP => match (hit_head(app, lparam), hit(app, lparam)) {
+            (Some(Head::Stack(i)), _) => head_menu(app, i, cursor()),
+            (_, Some((i, _))) if i < app.stack.items.len() => {
+                // Right-clicking outside the selection acts on that tile alone.
+                if !is_selected(app, i) {
+                    take_focus(app, i);
+                }
+                tile_menu(app, cursor());
+            }
+            _ => {}
+        },
+        WM_LBUTTONUP if hit_head(app, lparam).is_some() => {
+            app.stack_view.press = None;
+            match hit_head(app, lparam) {
+                Some(Head::Add) => new_stack(app),
+                Some(Head::Stack(i)) => {
+                    let double = app.stack_view.last_head_click.is_some_and(|(j, at)| {
+                        j == i && at.elapsed().as_millis() <= unsafe { GetDoubleClickTime() } as u128
+                    });
+                    app.stack_view.last_head_click = Some((i, Instant::now()));
+                    if double && i == app.stack.current {
+                        start_rename(app);
+                    } else {
+                        switch_stack(app, i);
+                    }
+                }
+                None => {}
             }
         }
         WM_LBUTTONUP => {

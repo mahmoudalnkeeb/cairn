@@ -12,7 +12,9 @@ use windows::core::HSTRING;
 
 use crate::store;
 
-const MAGIC: &[u8; 8] = b"CAIRNST1";
+const MAGIC: &[u8; 8] = b"CAIRNST2";
+/// 0.1 and 0.2 kept one unnamed stack.
+const MAGIC_V1: &[u8; 8] = b"CAIRNST1";
 const ICON_PX: i32 = 48;
 
 /// Premultiplied BGRA pixels, ready for Direct2D.
@@ -44,11 +46,19 @@ pub struct ShelfItem {
     pub icon: Option<Option<Thumb>>,
 }
 
+/// Every named stack. The current one's items live in `items`, so most code
+/// only ever sees one stack; switching swaps lists in and out of `others`.
 pub struct Shelf {
-    /// Newest first.
+    /// The current stack's items, newest first.
     pub items: Vec<ShelfItem>,
+    pub names: Vec<String>,
+    pub current: usize,
+    /// The other stacks' items. The slot at `current` is kept empty.
+    others: Vec<Vec<ShelfItem>>,
     next_id: u64,
 }
+
+pub const DEFAULT_NAME: &str = "Stack";
 
 pub enum Dropped {
     Paths(Vec<PathBuf>),
@@ -66,13 +76,23 @@ fn looks_like_link(s: &str) -> bool {
 
 impl Shelf {
     pub fn load() -> Shelf {
-        let items = file()
+        let saved = file()
             .and_then(|p| fs::read(p).ok())
             .and_then(|enc| store::unprotect(&enc))
-            .and_then(|raw| parse(&raw))
-            .unwrap_or_default();
-        let next_id = items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-        Shelf { items, next_id }
+            .and_then(|raw| parse(&raw));
+        Shelf::from_stacks(saved.unwrap_or_default())
+    }
+
+    fn from_stacks(saved: Saved) -> Shelf {
+        let (mut stacks, current) = (saved.stacks, saved.current);
+        if stacks.is_empty() {
+            stacks.push((DEFAULT_NAME.to_string(), Vec::new()));
+        }
+        let current = current.min(stacks.len() - 1);
+        let next_id = stacks.iter().flat_map(|(_, items)| items).map(|i| i.id).max().unwrap_or(0) + 1;
+        let (names, mut others): (Vec<String>, Vec<Vec<ShelfItem>>) = stacks.into_iter().unzip();
+        let items = std::mem::take(&mut others[current]);
+        Shelf { items, names, current, others, next_id }
     }
 
     pub fn save(&self) {
@@ -83,27 +103,96 @@ impl Shelf {
 
     fn encode(&self) -> Vec<u8> {
         let mut out = MAGIC.to_vec();
-        out.extend_from_slice(&(self.items.len() as u32).to_le_bytes());
-        for item in &self.items {
-            let (tag, body) = match &item.kind {
-                Kind::File(p) => (0u8, p.to_string_lossy().into_owned()),
-                Kind::Text(t) => (1, t.clone()),
-                Kind::Link(l) => (2, l.clone()),
-            };
-            out.extend_from_slice(&item.id.to_le_bytes());
-            out.push(tag);
-            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
-            out.extend_from_slice(body.as_bytes());
+        out.extend_from_slice(&(self.names.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.current as u32).to_le_bytes());
+        for (i, name) in self.names.iter().enumerate() {
+            put_str(&mut out, name);
+            let items = if i == self.current { &self.items } else { &self.others[i] };
+            out.extend_from_slice(&(items.len() as u32).to_le_bytes());
+            for item in items {
+                let (tag, body) = match &item.kind {
+                    Kind::File(p) => (0u8, p.to_string_lossy().into_owned()),
+                    Kind::Text(t) => (1, t.clone()),
+                    Kind::Link(l) => (2, l.clone()),
+                };
+                out.extend_from_slice(&item.id.to_le_bytes());
+                out.push(tag);
+                put_str(&mut out, &body);
+            }
         }
         out
     }
 
+    /// How many items a stack holds.
+    pub fn count(&self, stack: usize) -> usize {
+        if stack == self.current { self.items.len() } else { self.others.get(stack).map_or(0, Vec::len) }
+    }
+
+    /// Makes another stack the current one.
+    pub fn switch(&mut self, stack: usize) {
+        if stack < self.names.len() && stack != self.current {
+            std::mem::swap(&mut self.items, &mut self.others[self.current]);
+            std::mem::swap(&mut self.items, &mut self.others[stack]);
+            self.current = stack;
+        }
+    }
+
+    /// Adds an empty stack with a free "Stack N" name and switches to it.
+    pub fn new_stack(&mut self) -> usize {
+        let name = (2..).map(|n| format!("{DEFAULT_NAME} {n}")).find(|n| !self.names.contains(n)).unwrap();
+        self.names.push(name);
+        self.others.push(Vec::new());
+        let i = self.names.len() - 1;
+        self.switch(i);
+        i
+    }
+
+    pub fn rename(&mut self, stack: usize, name: &str) {
+        let name = name.trim();
+        if let Some(n) = self.names.get_mut(stack)
+            && !name.is_empty()
+        {
+            *n = name.chars().take(40).collect();
+        }
+    }
+
+    /// Moves items from the current stack to the front of another, skipping
+    /// any it already holds. Returns how many moved.
+    pub fn move_to(&mut self, ids: &[u64], stack: usize) -> usize {
+        if stack == self.current || stack >= self.names.len() {
+            return 0;
+        }
+        let (moving, keep): (Vec<ShelfItem>, Vec<ShelfItem>) = std::mem::take(&mut self.items).into_iter().partition(|i| ids.contains(&i.id));
+        self.items = keep;
+        let dest = &mut self.others[stack];
+        let mut moved = 0;
+        for item in moving {
+            if !dest.iter().any(|d| same(&d.kind, &item.kind)) {
+                dest.insert(moved, item);
+                moved += 1;
+            }
+        }
+        moved
+    }
+
+    /// Deletes a stack and returns its items, unless it is the last one.
+    pub fn delete_stack(&mut self, stack: usize) -> Option<Vec<ShelfItem>> {
+        if self.names.len() < 2 || stack >= self.names.len() {
+            return None;
+        }
+        if stack == self.current {
+            self.switch(if stack == 0 { 1 } else { stack - 1 });
+        }
+        self.names.remove(stack);
+        let items = self.others.remove(stack);
+        if self.current > stack {
+            self.current -= 1;
+        }
+        Some(items)
+    }
+
     fn contains(&self, kind: &Kind) -> bool {
-        self.items.iter().any(|i| match (&i.kind, kind) {
-            (Kind::File(a), Kind::File(b)) => a == b,
-            (Kind::Text(a), Kind::Text(b)) | (Kind::Link(a), Kind::Link(b)) => a == b,
-            _ => false,
-        })
+        self.items.iter().any(|i| same(&i.kind, kind))
     }
 
     /// Adds dropped content, skipping duplicates. Returns how many were new.
@@ -147,32 +236,67 @@ impl Shelf {
     }
 }
 
-fn parse(raw: &[u8]) -> Option<Vec<ShelfItem>> {
+fn same(a: &Kind, b: &Kind) -> bool {
+    match (a, b) {
+        (Kind::File(a), Kind::File(b)) => a == b,
+        (Kind::Text(a), Kind::Text(b)) | (Kind::Link(a), Kind::Link(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+    out.extend_from_slice(s.as_bytes());
+}
+
+/// What the stack file holds: named stacks and which one is current.
+#[derive(Default)]
+struct Saved {
+    stacks: Vec<(String, Vec<ShelfItem>)>,
+    current: usize,
+}
+
+/// Reads the current format, or the single-stack format of 0.1 and 0.2.
+fn parse(raw: &[u8]) -> Option<Saved> {
     let mut at = 0usize;
     let mut take = |n: usize| -> Option<&[u8]> {
         let s = raw.get(at..at + n)?;
         at += n;
         Some(s)
     };
-    if take(8)? != MAGIC {
+    let magic = take(8)?;
+    let named = magic == MAGIC;
+    if !named && magic != MAGIC_V1 {
         return None;
     }
-    let count = u32::from_le_bytes(take(4)?.try_into().ok()?);
-    let mut items = Vec::new();
-    for _ in 0..count {
-        let id = u64::from_le_bytes(take(8)?.try_into().ok()?);
-        let tag = take(1)?[0];
-        let len = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
-        let body = String::from_utf8(take(len)?.to_vec()).ok()?;
-        let kind = match tag {
-            0 => Kind::File(PathBuf::from(body)),
-            1 => Kind::Text(body),
-            2 => Kind::Link(body),
-            _ => return None,
+    let u32_at = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap());
+    let (stack_count, current) = if named { (u32_at(take(4)?), u32_at(take(4)?) as usize) } else { (1, 0) };
+    let mut saved = Saved { stacks: Vec::new(), current };
+    for _ in 0..stack_count {
+        let name = if named {
+            let len = u32_at(take(4)?) as usize;
+            String::from_utf8(take(len)?.to_vec()).ok()?
+        } else {
+            DEFAULT_NAME.to_string()
         };
-        items.push(ShelfItem { id, kind, icon: None });
+        let count = u32_at(take(4)?);
+        let mut items = Vec::new();
+        for _ in 0..count {
+            let id = u64::from_le_bytes(take(8)?.try_into().ok()?);
+            let tag = take(1)?[0];
+            let len = u32_at(take(4)?) as usize;
+            let body = String::from_utf8(take(len)?.to_vec()).ok()?;
+            let kind = match tag {
+                0 => Kind::File(PathBuf::from(body)),
+                1 => Kind::Text(body),
+                2 => Kind::Link(body),
+                _ => return None,
+            };
+            items.push(ShelfItem { id, kind, icon: None });
+        }
+        saved.stacks.push((name, items));
     }
-    Some(items)
+    Some(saved)
 }
 
 /// Short display name for a tile.
@@ -237,7 +361,7 @@ mod tests {
     use super::*;
 
     fn shelf() -> Shelf {
-        Shelf { items: Vec::new(), next_id: 1 }
+        Shelf::from_stacks(Saved::default())
     }
 
     #[test]
@@ -266,11 +390,64 @@ mod tests {
         s.add(Dropped::Paths(vec!["C:\\x\\ü.txt".into()]));
         s.add(Dropped::Text("note\nline".into()));
         s.add(Dropped::Text("https://example.com".into()));
-        assert!(parse(&shelf().encode()).unwrap().is_empty());
-        let back = parse(&s.encode()).unwrap();
-        assert_eq!(back.len(), 3);
-        assert!(matches!(&back[2].kind, Kind::File(p) if p.to_string_lossy() == "C:\\x\\ü.txt"));
-        assert!(matches!(&back[0].kind, Kind::Link(l) if l == "https://example.com"));
+        assert!(parse(&shelf().encode()).unwrap().stacks[0].1.is_empty());
+        s.new_stack();
+        s.add(Dropped::Text("in the second".into()));
+        s.rename(1, "Invoices");
+        let back = Shelf::from_stacks(parse(&s.encode()).unwrap());
+        assert_eq!(back.names, ["Stack", "Invoices"]);
+        assert_eq!((back.current, back.count(0), back.count(1)), (1, 3, 1));
+        let first = &back.others[0];
+        assert!(matches!(&first[2].kind, Kind::File(p) if p.to_string_lossy() == "C:\\x\\ü.txt"));
+        assert!(matches!(&first[0].kind, Kind::Link(l) if l == "https://example.com"));
+    }
+
+    #[test]
+    fn reads_the_single_stack_format() {
+        let mut v1 = MAGIC_V1.to_vec();
+        v1.extend_from_slice(&1u32.to_le_bytes());
+        v1.extend_from_slice(&7u64.to_le_bytes());
+        v1.push(1);
+        put_str(&mut v1, "kept");
+        let s = Shelf::from_stacks(parse(&v1).unwrap());
+        assert_eq!(s.names, [DEFAULT_NAME]);
+        assert!(matches!(&s.items[0].kind, Kind::Text(t) if t == "kept"));
+        // New items never reuse an old id.
+        assert_eq!(s.next_id, 8);
+    }
+
+    #[test]
+    fn stacks_switch_and_delete() {
+        let mut s = shelf();
+        s.add(Dropped::Text("one".into()));
+        assert_eq!(s.new_stack(), 1);
+        assert_eq!(s.names[1], "Stack 2");
+        assert!(s.items.is_empty());
+        s.add(Dropped::Text("two".into()));
+        s.switch(0);
+        assert!(matches!(&s.items[0].kind, Kind::Text(t) if t == "one"));
+        // Deleting the current stack moves to a neighbour.
+        assert_eq!(s.delete_stack(0).unwrap().len(), 1);
+        assert_eq!((s.current, s.names.len()), (0, 1));
+        assert!(matches!(&s.items[0].kind, Kind::Text(t) if t == "two"));
+        assert!(s.delete_stack(0).is_none());
+    }
+
+    #[test]
+    fn moves_items_between_stacks() {
+        let mut s = shelf();
+        s.add(Dropped::Paths(vec!["C:\\a.txt".into(), "C:\\b.txt".into(), "C:\\c.txt".into()]));
+        s.new_stack();
+        s.add(Dropped::Paths(vec!["C:\\b.txt".into()]));
+        s.switch(0);
+        let ids: Vec<u64> = s.items[..2].iter().map(|i| i.id).collect();
+        // b.txt is already in the other stack, so only a.txt moves; both
+        // leave this one.
+        assert_eq!(s.move_to(&ids, 1), 1);
+        assert_eq!(s.items.len(), 1);
+        s.switch(1);
+        let names: Vec<String> = s.items.iter().map(|i| name(&i.kind)).collect();
+        assert_eq!(names, ["a.txt", "b.txt"]);
     }
 
     #[test]

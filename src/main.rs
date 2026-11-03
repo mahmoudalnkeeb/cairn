@@ -4,6 +4,7 @@
 //! it, then drag it out into any app.
 
 mod a11y;
+mod actions;
 mod clipboard;
 mod dnd;
 mod edgetab;
@@ -19,7 +20,7 @@ use std::cell::Cell;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Ole::OleInitialize;
+use windows::Win32::System::Ole::{OleGetClipboard, OleInitialize};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -32,6 +33,8 @@ use settings::{Edge, Settings};
 
 const WM_TRAY: u32 = WM_APP + 1;
 const HOTKEY_ID: i32 = 1;
+const CLIP_HOTKEY_ID: i32 = 2;
+const CLIP_HOTKEY: &str = "Ctrl+Alt+V";
 const FULLSCREEN_TIMER: usize = 1;
 const PASTE_TIMER: usize = 2;
 const UNDO_TIMER: usize = 3;
@@ -42,6 +45,7 @@ const CMD_RUN_AT_LOGIN: u32 = 2;
 const CMD_QUIT: u32 = 3;
 const CMD_CLEAR: u32 = 4;
 const CMD_UNDO_CLEAR: u32 = 5;
+const CMD_ADD_CLIPBOARD: u32 = 6;
 const CMD_EDGE_LEFT: u32 = 10;
 const CMD_EDGE_RIGHT: u32 = 11;
 const CMD_CENTER_TAB: u32 = 12;
@@ -63,6 +67,10 @@ pub struct App {
     /// What "Clear stack" took, while it can still be undone.
     cleared: Vec<shelf::ShelfItem>,
     hotkey: Option<&'static str>,
+    /// Whether Ctrl+Alt+V (add clipboard) could be registered.
+    clip_hotkey: bool,
+    /// Where the zip being made will be saved.
+    pub zip_out: Option<std::path::PathBuf>,
     tray_icon: HICON,
     taskbar_created: u32,
 }
@@ -245,10 +253,16 @@ fn clear_stack(app: &mut App) {
     }
     app.stack.save();
     stackview::close(app, false);
-    let n = cleared.len();
-    app.cleared = cleared;
+    offer_undo(app, cleared, "Stack cleared");
+}
+
+/// Keeps removed items for 10 seconds: clicking the notification or "Undo"
+/// in the tray menu puts them back in the current stack.
+pub fn offer_undo(app: &mut App, items: Vec<shelf::ShelfItem>, title: &str) {
+    let n = items.len();
+    app.cleared = items;
     let what = if n == 1 { "1 item".to_string() } else { format!("{n} items") };
-    notify(app, "Stack cleared", &format!("Removed {what}. Click here within 10 seconds to undo."));
+    notify(app, title, &format!("Removed {what}. Click here within 10 seconds to undo."));
     unsafe {
         SetTimer(app.host, UNDO_TIMER, UNDO_MS, None);
     }
@@ -267,7 +281,28 @@ fn undo_clear(app: &mut App) {
         stackview::refresh(app);
     }
     let what = if back == 1 { "1 item is".to_string() } else { format!("{back} items are") };
-    notify(app, "Clear undone", &format!("{what} back in the stack."));
+    let name = &app.stack.names[app.stack.current];
+    notify(app, "Undone", &format!("{what} back in {name}."));
+}
+
+/// Adds whatever is on the clipboard (files, a link or text) to the current
+/// stack, and shows the result on the tab under the cursor.
+fn add_clipboard(app: &mut App) {
+    let dropped = unsafe { OleGetClipboard() }.ok().and_then(|data| dnd::read(&data));
+    let Some(dropped) = dropped else {
+        notify(app, "Nothing to add", "The clipboard holds no files, links or text.");
+        return;
+    };
+    let added = app.stack.add(dropped);
+    if added > 0 {
+        app.stack.save();
+    }
+    if app.stack_view.open {
+        stackview::refresh(app);
+    } else {
+        let i = edgetab::under_cursor(app);
+        edgetab::dropped(app, i, added);
+    }
 }
 
 fn register_hotkey(host: HWND, i: usize) -> bool {
@@ -337,11 +372,16 @@ pub fn show_context_menu(app: &mut App) {
         let Ok(popup) = CreatePopupMenu() else { return };
         let open = HSTRING::from(format!("Open stack\t{}", app.hotkey.unwrap_or_default()));
         let _ = AppendMenuW(popup, MF_STRING, CMD_OPEN as usize, &open);
+        let clip = HSTRING::from(match app.clip_hotkey {
+            true => format!("Add clipboard to stack\t{CLIP_HOTKEY}"),
+            false => "Add clipboard to stack".to_string(),
+        });
+        let _ = AppendMenuW(popup, MF_STRING, CMD_ADD_CLIPBOARD as usize, &clip);
         if app.cleared.is_empty() {
             let empty = if app.stack.items.is_empty() { MF_GRAYED } else { MF_ENABLED };
             let _ = AppendMenuW(popup, MF_STRING | empty, CMD_CLEAR as usize, w!("Clear stack"));
         } else {
-            let _ = AppendMenuW(popup, MF_STRING, CMD_UNDO_CLEAR as usize, w!("Undo clear"));
+            let _ = AppendMenuW(popup, MF_STRING, CMD_UNDO_CLEAR as usize, w!("Undo"));
         }
         let _ = AppendMenuW(popup, MF_SEPARATOR, 0, None);
         if let Ok(keys) = CreatePopupMenu() {
@@ -384,6 +424,7 @@ pub fn show_context_menu(app: &mut App) {
         let _ = DestroyMenu(popup);
         match cmd.0 as u32 {
             CMD_OPEN => toggle_stack(app),
+            CMD_ADD_CLIPBOARD => add_clipboard(app),
             CMD_CLEAR => clear_stack(app),
             CMD_UNDO_CLEAR => undo_clear(app),
             CMD_EDGE_LEFT => set_edge(app, Edge::Left),
@@ -410,6 +451,7 @@ pub fn show_context_menu(app: &mut App) {
 fn quit(app: &mut App) {
     unsafe {
         let _ = UnregisterHotKey(app.host, HOTKEY_ID);
+        let _ = UnregisterHotKey(app.host, CLIP_HOTKEY_ID);
         let _ = Shell_NotifyIconW(NIM_DELETE, &tray_data(app));
         PostQuitMessage(0);
     }
@@ -470,6 +512,14 @@ fn poll_fullscreen(app: &mut App) {
 fn host_handle(app: &mut App, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     match msg {
         WM_HOTKEY if wparam.0 as i32 == HOTKEY_ID => toggle_stack(app),
+        WM_HOTKEY if wparam.0 as i32 == CLIP_HOTKEY_ID => add_clipboard(app),
+        actions::WM_ZIP_DONE => match wparam.0 {
+            1 => {
+                let note = app.zip_out.take().map_or("The zip is ready.".to_string(), |p| format!("Saved {}", p.display()));
+                notify(app, "Zip saved", &note)
+            }
+            _ => notify(app, "Zip failed", "Windows could not create the zip. Check the folder can be written to."),
+        },
         WM_TRAY => match lparam.0 as u32 {
             WM_LBUTTONUP => toggle_stack(app),
             WM_RBUTTONUP => show_context_menu(app),
@@ -572,6 +622,8 @@ fn main() -> Result<()> {
             settings: Settings::load(),
             cleared: Vec::new(),
             hotkey: None,
+            clip_hotkey: false,
+            zip_out: None,
             tray_icon,
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
         }));
@@ -584,6 +636,7 @@ fn main() -> Result<()> {
             .chain((0..settings::HOTKEYS.len()).filter(|&i| i != preferred))
             .find(|&i| register_hotkey(host, i));
         app.hotkey = chosen.map(|i| settings::HOTKEYS[i].label);
+        app.clip_hotkey = RegisterHotKey(host, CLIP_HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_V.0 as u32).is_ok();
 
         tray_add(app);
         edgetab::sync(app);

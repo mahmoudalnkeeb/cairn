@@ -2,6 +2,19 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-03
+
+### Added
+
+- Named stacks, shown as tabs at the top of the stack. Add one with + or Ctrl+N, switch with a click or Ctrl+Tab, rename with a double-click or F2, and delete from the right-click menu. Deleted items can be brought back for 10 seconds.
+- Right-click items (or press the Menu key) to copy their paths, copy them as Markdown links, save them as a zip, copy them to a folder, or move them to another stack.
+- Ctrl+Alt+V, or "Add clipboard to stack" in the tray menu, adds the files, link or text on the clipboard.
+- Screen readers announce the stack's name.
+
+### Changed
+
+- Stacks saved by 0.1 and 0.2 open as one stack called "Stack".
+
 ## [0.2.0] - 2026-11-03
 
 ### Added
@@ -35,5 +48,6 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.3.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.1.0
