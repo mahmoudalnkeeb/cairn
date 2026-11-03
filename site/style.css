@@ -111,53 +111,63 @@ section > .wrap > h2 { max-width: 16ch; margin-bottom: 48px; }
 .lede { max-width: 34em; margin: 28px auto 0; color: var(--muted); font-size: clamp(1.0625rem, 1.5vw, 1.1875rem); }
 .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 40px; }
 
-/* Demo illustration */
+/* Demo illustration: a monitor showing the desktop drawn at 1120 × 630 */
 .demo { margin-top: clamp(48px, 7vw, 80px); }
-.demo figure { display: grid; gap: 14px; }
+.demo figure { display: grid; justify-items: center; gap: 18px; }
 .demo figcaption { color: var(--muted); font-size: .875rem; text-align: center; }
-.screen { position: relative; display: flex; justify-content: space-between; align-items: center; gap: 48px; padding: clamp(16px, 5vw, 48px); padding-right: clamp(28px, 6vw, 40px); padding-bottom: calc(clamp(16px, 5vw, 48px) + 40px); min-height: 480px; font-family: var(--app); background: var(--wallpaper); border: 1px solid var(--outline); border-radius: 12px; box-shadow: 0 1px 0 rgb(255 255 255 / .04) inset, 0 40px 80px -32px rgb(0 0 0 / .6); overflow: hidden; }
-.taskbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 0 14px; color: var(--muted); font-size: .75rem; background: color-mix(in srgb, var(--sunken) 82%, transparent); border-top: 1px solid var(--line); backdrop-filter: blur(12px); }
-.taskbar .start svg { width: 16px; height: 16px; color: var(--text); }
-.taskbar .tray { display: inline-flex; align-items: center; gap: 10px; }
-.taskbar .tray svg { width: 16px; height: 16px; }
+.monitor { width: min(100%, 980px); filter: drop-shadow(0 40px 48px rgb(0 0 0 / .35)); }
+.bezel { padding: clamp(6px, 1.2vw, 12px) clamp(6px, 1.2vw, 12px) clamp(14px, 2.4vw, 26px); background: linear-gradient(#202327, #16181b); border: 1px solid #2c3035; border-radius: clamp(8px, 1.4vw, 16px); }
+.bezel::after { content: ""; display: block; width: 6px; height: 6px; margin: clamp(4px, .9vw, 9px) auto 0; background: #3a3f45; border-radius: 50%; }
+.display { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--wallpaper); border-radius: 3px; }
+.stand { display: grid; justify-items: center; }
+.neck { width: clamp(70px, 13vw, 130px); height: clamp(34px, 6.5vw, 64px); background: linear-gradient(90deg, #1a1d20, #2b2f34 50%, #1a1d20); clip-path: polygon(14% 0, 86% 0, 100% 100%, 0 100%); }
+.base { width: clamp(150px, 30vw, 300px); height: clamp(8px, 1.4vw, 14px); background: linear-gradient(#2f3338, #1b1e21); border-radius: 4px 4px 10px 10px; }
+
+.desk { position: absolute; left: 0; top: 0; width: 1120px; height: 630px; transform: scale(var(--s, .87)); transform-origin: 0 0; font-family: var(--app); color: var(--text); }
+.app { position: absolute; left: 84px; top: 84px; width: 500px; height: 390px; display: grid; grid-template-rows: auto 1fr; background: var(--surface); border: 1px solid var(--outline); border-radius: var(--r-lg); box-shadow: 0 16px 40px rgb(0 0 0 / .35); overflow: hidden; }
+.app-bar { height: 38px; padding: 0 16px; font-size: 13px; font-weight: 600; line-height: 38px; background: var(--surface-hover); border-bottom: 1px solid var(--line); }
+.app-body { display: grid; grid-template-rows: auto auto auto 1fr; gap: 14px; padding: 16px; }
+.field { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; color: var(--muted); font-size: 13px; border-bottom: 1px solid var(--line); }
+.field span { width: 56px; }
+.field i, .lines i { display: block; height: 7px; background: var(--line); border-radius: 4px; }
+.lines { display: grid; gap: 10px; padding-top: 4px; }
+.attach { display: grid; place-items: center; color: var(--text); font-size: 13px; font-weight: 600; background: var(--primary-subtle); border: 1.5px dashed var(--primary); border-radius: var(--r-lg); }
 .ctl { float: right; display: inline-flex; gap: 14px; align-items: center; height: 100%; }
 .ctl i { position: relative; display: block; width: 9px; height: 9px; }
 .ctl i:nth-child(1)::before { content: ""; position: absolute; left: 0; right: 0; top: 4px; height: 1px; background: var(--muted); }
 .ctl i:nth-child(2) { border: 1px solid var(--muted); }
 .ctl i:nth-child(3)::before, .ctl i:nth-child(3)::after { content: ""; position: absolute; left: -1px; right: -1px; top: 4px; height: 1px; background: var(--muted); rotate: 45deg; }
 .ctl i:nth-child(3)::after { rotate: -45deg; }
-.app { flex: 1; max-width: 460px; align-self: stretch; display: grid; grid-template-rows: auto 1fr; background: var(--surface); border: 1px solid var(--outline); border-radius: var(--r-lg); box-shadow: 0 8px 24px rgb(0 0 0 / .3); overflow: hidden; }
-.app-bar { height: 38px; padding: 0 16px; font-size: .8125rem; font-weight: 600; line-height: 38px; background: var(--surface-hover); border-bottom: 1px solid var(--line); }
-.app-body { display: grid; grid-template-rows: auto auto auto 1fr; gap: 14px; padding: 16px; }
-.field { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; color: var(--muted); font-size: .8125rem; border-bottom: 1px solid var(--line); }
-.field span { width: 56px; }
-.field i, .lines i { display: block; height: 7px; background: var(--line); border-radius: 4px; }
-.lines { display: grid; gap: 10px; padding-top: 4px; }
-.attach { display: grid; place-items: center; min-height: 96px; color: var(--text); font-size: .8125rem; font-weight: 600; background: var(--primary-subtle); border: 1.5px dashed var(--primary); border-radius: var(--r-lg); }
-.drag-chip { position: absolute; right: calc(100% + 4px); bottom: 72px; z-index: 2; display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: .8125rem; font-weight: 600; white-space: nowrap; background: var(--surface); border: 1px solid var(--outline); border-radius: var(--r); box-shadow: 0 10px 24px rgb(0 0 0 / .35); rotate: -3deg; }
+.drag-chip { position: absolute; left: 546px; top: 380px; z-index: 2; display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; background: var(--surface); border: 1px solid var(--outline); border-radius: var(--r); box-shadow: 0 10px 24px rgb(0 0 0 / .35); rotate: -3deg; }
 .drag-chip svg { width: 16px; height: 16px; }
-@media (max-width: 900px) { .app, .drag-chip { display: none; } .screen { justify-content: flex-end; } }
-.edge-tab { position: absolute; right: 0; top: 50%; width: 6px; height: 120px; translate: 0 -50%; background: color-mix(in srgb, var(--outline-control) 60%, transparent); border-radius: 999px 0 0 999px; }
-.flyout { position: relative; flex: none; width: min(100%, 432px); padding: 12px; background: var(--flyout); border: 1px solid var(--outline); border-radius: var(--r-lg); box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
-.flyout-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font: 600 1.25rem/28px var(--app); }
-.flyout-head .muted { font: 400 .75rem/1 var(--app); }
+
+/* The stack, beside the edge tab on the right. */
+.edge-tab { position: absolute; right: 0; top: 231px; width: 6px; height: 120px; background: color-mix(in srgb, var(--outline-control) 60%, transparent); border-radius: 999px 0 0 999px; }
+.flyout { position: absolute; right: 22px; top: 146px; width: 432px; padding: 12px; background: var(--flyout); border: 1px solid var(--outline); border-radius: var(--r-lg); box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
+.flyout-head { display: flex; align-items: center; gap: 4px; height: 28px; margin-bottom: 8px; font: 600 14px/1 var(--app); }
+.pill { padding: 7px 10px; color: var(--muted); border-radius: 6px; }
+.pill.on { color: var(--text); background: var(--surface); }
+.add { width: 28px; color: var(--muted); font-weight: 400; text-align: center; }
+.count { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 400; }
 .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.tile { display: grid; justify-items: center; align-content: start; gap: 2px; min-width: 0; min-height: 92px; padding: 12px 6px 10px; background: var(--surface); border: 1px solid transparent; border-radius: var(--r-lg); box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
-.tile svg { width: 28px; height: 28px; margin-bottom: 6px; color: var(--text); }
-.tile b { max-width: 100%; overflow: hidden; font-size: .8125rem; font-weight: 600; line-height: 1.35; white-space: nowrap; text-overflow: ellipsis; }
-.tile i { color: var(--muted); font-size: .75rem; font-style: normal; line-height: 1.3; }
+.tile { display: grid; justify-items: center; align-content: start; gap: 2px; min-width: 0; height: 92px; padding: 10px 6px 8px; background: var(--surface); border: 1px solid transparent; border-radius: var(--r-lg); box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
+.tile svg { width: 28px; height: 28px; margin-bottom: 4px; color: var(--text); }
+.tile b { max-width: 100%; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.35; white-space: nowrap; text-overflow: ellipsis; }
+.tile i { color: var(--muted); font-size: 12px; font-style: normal; line-height: 1.3; }
 .tile.sel { background: color-mix(in srgb, var(--primary) 15%, var(--surface)); }
 .tile.focus { border-color: var(--primary); }
-.tile.drop { align-content: center; background: transparent; border: 1.5px dashed var(--primary); box-shadow: none; }
-.tile.drop svg { color: var(--muted); }
-.flyout-foot { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); overflow: hidden; color: var(--muted); font-size: .75rem; white-space: nowrap; text-overflow: ellipsis; }
-@media (max-width: 520px) {
-  .screen { min-height: 0; padding: 20px 20px 60px 12px; }
-  .tile { min-height: 0; padding-top: 8px; }
-  .tile svg { width: 22px; height: 22px; margin-bottom: 2px; }
-  .tile b { font-size: .6875rem; }
-  .tile i { font-size: .625rem; }
-}
+.flyout-foot { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); overflow: hidden; color: var(--muted); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+
+/* A Windows 11 style taskbar: apps in the middle, tray on the right. */
+.taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; background: color-mix(in srgb, var(--sunken) 86%, transparent); border-top: 1px solid var(--line); backdrop-filter: blur(12px); }
+.taskbar .apps { display: inline-flex; align-items: center; gap: 6px; }
+.taskbar .apps > svg { width: 20px; height: 20px; margin: 0 10px; color: #4cc2ff; }
+.app-ico { position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 6px; color: var(--text); }
+.app-ico svg { width: 20px; height: 20px; }
+.app-ico.on { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.app-ico.on::after { content: ""; position: absolute; bottom: 2px; width: 16px; height: 3px; background: #4cc2ff; border-radius: 2px; }
+.taskbar .tray { position: absolute; right: 14px; display: inline-flex; align-items: center; gap: 14px; line-height: 1.3; text-align: right; }
+.taskbar .tray svg { width: 16px; height: 16px; }
 
 /* How it works */
 .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }

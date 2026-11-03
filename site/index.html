@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400&family=JetBrains+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=0.4.1">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -34,6 +34,8 @@
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
   <symbol id="i-stack" viewBox="0 0 24 24"><rect x="3.75" y="4.75" width="16.5" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.75" y="14.25" width="16.5" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
   <symbol id="i-feather" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M6.5 17.5C6 11.5 11.5 6 19 5c-1 7-6.5 13-12.5 12.5Z"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M4.5 19.5 9 15"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3.75" y="5.75" width="16.5" height="12.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="m4.5 7 7.5 6 7.5-6"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M3.75 12h16.5M12 3.75c2.5 2.6 2.5 13.9 0 16.5M12 3.75c-2.5 2.6-2.5 13.9 0 16.5"/></symbol>
   <symbol id="i-tabs" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M3.75 8.25h16.5v11.5H3.75zM3.75 8.25V5.5a1 1 0 0 1 1-1h5l1.5 3.75M11.25 8.25 12.5 4.5h4.5l1.25 3.75"/></symbol>
   <symbol id="i-bolt" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M13 3 5 13.5h6L10 21l9-11.5h-6z"/></symbol>
   <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5.75" y="4.75" width="12.5" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="3" width="6" height="3.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M9 11h6M9 14.5h6"/></symbol>
@@ -69,32 +71,42 @@
   <section class="demo" aria-label="What Cairn looks like">
     <div class="wrap">
       <figure>
-        <div class="screen" aria-hidden="true">
-          <div class="app">
-            <div class="app-bar">New message<span class="ctl"><i></i><i></i><i></i></span></div>
-            <div class="app-body">
-              <div class="field"><span>To</span><i style="width: 46%"></i></div>
-              <div class="field"><span>Subject</span><i style="width: 62%"></i></div>
-              <div class="lines"><i></i><i></i><i style="width: 70%"></i></div>
-              <div class="attach">Drop files here to attach</div>
+        <div class="monitor" aria-hidden="true">
+          <div class="bezel">
+            <div class="display">
+              <!-- Drawn at 1120 × 630 and scaled to fit, so it keeps a screen's proportions. -->
+              <div class="desk">
+                <div class="app">
+                  <div class="app-bar">New message<span class="ctl"><i></i><i></i><i></i></span></div>
+                  <div class="app-body">
+                    <div class="field"><span>To</span><i style="width: 46%"></i></div>
+                    <div class="field"><span>Subject</span><i style="width: 62%"></i></div>
+                    <div class="lines"><i></i><i></i><i style="width: 70%"></i></div>
+                    <div class="attach">Drop files here to attach</div>
+                  </div>
+                </div>
+                <div class="drag-chip"><svg><use href="#i-image"/></svg><svg><use href="#i-file"/></svg>2 items</div>
+                <div class="flyout">
+                  <div class="flyout-head"><span class="pill on">Stack</span><span class="pill">Work</span><span class="add">+</span><span class="count">6 items</span></div>
+                  <div class="tiles">
+                    <div class="tile sel"><svg><use href="#i-image"/></svg><b>trailhead.jpg</b><i>File</i></div>
+                    <div class="tile sel focus"><svg><use href="#i-file"/></svg><b>Report.pdf</b><i>File</i></div>
+                    <div class="tile"><svg><use href="#i-folder"/></svg><b>Invoices</b><i>Folder</i></div>
+                    <div class="tile"><svg><use href="#i-text"/></svg><b>Meet at 4 by…</b><i>Text</i></div>
+                    <div class="tile"><svg><use href="#i-link"/></svg><b>example.com/map</b><i>Link</i></div>
+                    <div class="tile"><svg><use href="#i-file"/></svg><b>notes.md</b><i>File</i></div>
+                  </div>
+                  <div class="flyout-foot">2 selected &nbsp;&nbsp; Drag out to use &nbsp;&nbsp; Del remove &nbsp;&nbsp; Right-click for more</div>
+                </div>
+                <div class="edge-tab"></div>
+                <div class="taskbar">
+                  <span class="apps"><svg><use href="#i-windows"/></svg><span class="app-ico"><svg><use href="#i-folder"/></svg></span><span class="app-ico on"><svg><use href="#i-mail"/></svg></span><span class="app-ico"><svg><use href="#i-globe"/></svg></span></span>
+                  <span class="tray"><svg><use href="#i-mark"/></svg><span>4:12 PM<br>11/3/2026</span></span>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="flyout">
-            <div class="drag-chip"><svg><use href="#i-image"/></svg><svg><use href="#i-file"/></svg>2 items</div>
-            <div class="flyout-head"><span>Stack</span><span class="muted">6 items</span></div>
-            <div class="tiles">
-              <div class="tile sel"><svg><use href="#i-image"/></svg><b>trailhead.jpg</b><i>File</i></div>
-              <div class="tile sel focus"><svg><use href="#i-file"/></svg><b>Report.pdf</b><i>File</i></div>
-              <div class="tile"><svg><use href="#i-folder"/></svg><b>Invoices</b><i>Folder</i></div>
-              <div class="tile"><svg><use href="#i-text"/></svg><b>Meet at 4 by…</b><i>Text</i></div>
-              <div class="tile"><svg><use href="#i-link"/></svg><b>example.com/map</b><i>Link</i></div>
-              <div class="tile"><svg><use href="#i-file"/></svg><b>notes.md</b><i>File</i></div>
-              <div class="tile drop"><svg><use href="#i-plus"/></svg><i>Drop here</i></div>
-            </div>
-            <div class="flyout-foot">2 selected &nbsp; Drag out to use &nbsp; Del remove &nbsp; Esc close</div>
-          </div>
-          <div class="edge-tab"></div>
-          <div class="taskbar"><span class="start"><svg><use href="#i-windows"/></svg></span><span class="tray"><svg><use href="#i-mark"/></svg>4:12 PM</span></div>
+          <div class="stand"><span class="neck"></span><span class="base"></span></div>
         </div>
         <figcaption>Pick what you need from your stack and drag it straight into an email.</figcaption>
       </figure>
@@ -239,5 +251,15 @@
     </div>
   </div>
 </footer>
+<script>
+  // Scale the 1120 × 630 desktop drawing to the monitor's width.
+  (() => {
+    const desk = document.querySelector('.desk');
+    if (!desk) return;
+    const fit = () => desk.style.setProperty('--s', desk.parentElement.clientWidth / 1120);
+    new ResizeObserver(fit).observe(desk.parentElement);
+    fit();
+  })();
+</script>
 </body>
 </html>
