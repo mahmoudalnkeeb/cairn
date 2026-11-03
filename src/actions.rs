@@ -91,6 +91,25 @@ pub fn pick_folder(owner: HWND) -> Option<PathBuf> {
     }
 }
 
+/// Asks where a missing file went, starting in its old folder, or the
+/// nearest one above it that still exists.
+pub fn pick_file(owner: HWND, old: &Path) -> Option<PathBuf> {
+    unsafe {
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        dialog.SetTitle(w!("Find file")).ok()?;
+        if let Some(name) = old.file_name() {
+            let _ = dialog.SetFileName(&HSTRING::from(name));
+        }
+        if let Some(dir) = old.ancestors().skip(1).find(|d| d.is_dir())
+            && let Ok(folder) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(dir.as_os_str()), None)
+        {
+            let _ = dialog.SetFolder(&folder);
+        }
+        dialog.Show(owner).ok()?;
+        item_path(&dialog.GetResult().ok()?)
+    }
+}
+
 fn item_path(item: &IShellItem) -> Option<PathBuf> {
     unsafe {
         let p = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;

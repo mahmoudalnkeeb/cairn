@@ -2,6 +2,18 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- A file moved to another folder on the same drive is found again when you open it from the stack.
+- "Find file…" on a missing file's right-click menu, to point the item at where the file is now.
+
+### Changed
+
+- A missing file's icon and name are dimmed, so it stands out from files that are still there.
+- The stack is saved in a new format. Earlier versions of Cairn can't read it, so going back to 0.5 starts with an empty stack.
+
 ## [0.5.1] - 2026-11-03
 
 ### Fixed

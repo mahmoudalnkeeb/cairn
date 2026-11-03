@@ -28,6 +28,7 @@
 - Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> to add whatever is on the clipboard.
 - Open a file or link with a double-click. A text item pastes into the app you came from.
 - Your stack stays until you remove it, including after a restart.
+- A file moved to another folder on the same drive is found again when you open it. If Cairn can't find it, the tile says Missing: right-click it and choose "Find file…".
 - Cairn keeps references to your files and never moves them. It keeps its own copy only of images that had no file, like a screenshot, and, if you turn it on, of files from USB sticks and network drives.
 - Shake the mouse while dragging to get a drop zone right next to the cursor (turn it on in the tray menu).
 - An edge tab on every monitor, or only the ones you pick. Drag the tab up or down to where you want it.

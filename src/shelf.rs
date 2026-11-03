@@ -6,15 +6,21 @@ use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::SIZE;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::Com::*;
 use windows::Win32::UI::Shell::*;
-use windows::core::HSTRING;
+use windows::core::{HSTRING, Interface};
 
 
 use crate::store;
 
-const MAGIC: &[u8; 8] = b"CAIRNST2";
+const MAGIC: &[u8; 8] = b"CAIRNST3";
+/// 0.3 to 0.5: named stacks, items with no extra fields.
+const MAGIC_V2: &[u8; 8] = b"CAIRNST2";
 /// 0.1 and 0.2 kept one unnamed stack.
 const MAGIC_V1: &[u8; 8] = b"CAIRNST1";
+/// Extra item fields, saved as (key, length, bytes) so unknown keys can be
+/// skipped and new ones added.
+const FIELD_TRACK: u8 = 1;
 const ICON_PX: i32 = 48;
 
 /// Premultiplied BGRA pixels, ready for Direct2D.
@@ -44,6 +50,19 @@ pub struct ShelfItem {
     /// Shell icon or thumbnail, loaded on first draw. `Some(None)` means
     /// loading failed and a glyph is drawn instead.
     pub icon: Option<Option<Thumb>>,
+    /// The shell's link data for a file, saved when it was added, so
+    /// Windows can find the file again after it moves on the same drive.
+    pub track: Option<Vec<u8>>,
+}
+
+impl ShelfItem {
+    fn new(id: u64, kind: Kind) -> ShelfItem {
+        let track = match &kind {
+            Kind::File(p) if p.exists() => track(p),
+            _ => None,
+        };
+        ShelfItem { id, kind, icon: None, track }
+    }
 }
 
 /// Every named stack. The current one's items live in `items`, so most code
@@ -158,6 +177,13 @@ impl Shelf {
                 out.extend_from_slice(&item.id.to_le_bytes());
                 out.push(tag);
                 put_str(&mut out, &body);
+                let fields: Vec<(u8, &[u8])> = item.track.iter().map(|t| (FIELD_TRACK, t.as_slice())).collect();
+                out.push(fields.len() as u8);
+                for (key, bytes) in fields {
+                    out.push(key);
+                    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                    out.extend_from_slice(bytes);
+                }
             }
         }
         out
@@ -201,12 +227,22 @@ impl Shelf {
         let all = self.items.iter_mut().chain(self.others.iter_mut().flatten());
         match all.into_iter().find(|i| i.id == id) {
             Some(item) => {
+                item.track = track(&path);
                 item.kind = Kind::File(path);
                 item.icon = None;
                 true
             }
             None => false,
         }
+    }
+
+    /// Asks Windows where a missing file in the current stack went, using
+    /// the link data saved when it was added, and points the item there.
+    pub fn find_again(&mut self, id: u64) -> Option<PathBuf> {
+        let item = self.items.iter().find(|i| i.id == id)?;
+        let found = resolve(item.track.as_deref()?)?;
+        self.replace_path(id, found.clone());
+        Some(found)
     }
 
     /// Deletes Cairn's own copies that no stack refers to any more. Items in
@@ -267,7 +303,7 @@ impl Shelf {
         let mut added = 0;
         for kind in kinds {
             if !self.contains(&kind) {
-                self.items.insert(added, ShelfItem { id: self.next_id, kind, icon: None });
+                self.items.insert(added, ShelfItem::new(self.next_id, kind));
                 self.next_id += 1;
                 added += 1;
             }
@@ -337,7 +373,8 @@ fn parse(raw: &[u8]) -> Option<Saved> {
         Some(s)
     };
     let magic = take(8)?;
-    let named = magic == MAGIC;
+    let fields = magic == MAGIC;
+    let named = fields || magic == MAGIC_V2;
     if !named && magic != MAGIC_V1 {
         return None;
     }
@@ -364,7 +401,16 @@ fn parse(raw: &[u8]) -> Option<Saved> {
                 2 => Kind::Link(body),
                 _ => return None,
             };
-            items.push(ShelfItem { id, kind, icon: None });
+            let mut item = ShelfItem { id, kind, icon: None, track: None };
+            for _ in 0..if fields { take(1)?[0] } else { 0 } {
+                let key = take(1)?[0];
+                let len = u32_at(take(4)?) as usize;
+                let bytes = take(len)?.to_vec();
+                if key == FIELD_TRACK {
+                    item.track = Some(bytes);
+                }
+            }
+            items.push(item);
         }
         saved.stacks.push((name, items));
     }
@@ -388,6 +434,42 @@ pub fn kind_label(kind: &Kind) -> &'static str {
         Kind::File(_) => "Missing",
         Kind::Text(_) => "Text",
         Kind::Link(_) => "Link",
+    }
+}
+
+/// Shell link data for a file: what a .lnk file would hold, including the
+/// IDs Windows uses to track a file moved within its drive.
+fn track(path: &Path) -> Option<Vec<u8>> {
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        link.SetPath(&HSTRING::from(path.as_os_str())).ok()?;
+        let stream = SHCreateMemStream(None)?;
+        link.cast::<IPersistStream>().ok()?.Save(&stream, true).ok()?;
+        let mut len = 0u64;
+        stream.Seek(0, STREAM_SEEK_CUR, Some(&mut len)).ok()?;
+        stream.Seek(0, STREAM_SEEK_SET, None).ok()?;
+        let mut out = vec![0u8; len as usize];
+        let mut read = 0u32;
+        stream.Read(out.as_mut_ptr() as *mut _, len as u32, Some(&mut read)).ok().ok()?;
+        out.truncate(read as usize);
+        Some(out)
+    }
+}
+
+/// Where tracked link data points now, if that file exists. Never shows UI
+/// and never searches folders by name; gives up after half a second.
+fn resolve(data: &[u8]) -> Option<PathBuf> {
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let stream = SHCreateMemStream(Some(data))?;
+        link.cast::<IPersistStream>().ok()?.Load(&stream).ok()?;
+        let flags = (SLR_NO_UI.0 | SLR_NOSEARCH.0) as u32 | (500 << 16);
+        link.Resolve(None, flags).ok()?;
+        let mut buf = vec![0u16; 32768];
+        link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+        let end = buf.iter().position(|&u| u == 0).unwrap_or(buf.len());
+        let path = PathBuf::from(String::from_utf16_lossy(&buf[..end]));
+        path.exists().then_some(path)
     }
 }
 
@@ -514,7 +596,7 @@ mod tests {
         let b = save_image(&dir, b"two", "png", "2026-11-03 120000").unwrap();
         assert_eq!(a.file_name().unwrap(), "Image 2026-11-03 120000.png");
         assert_eq!(b.file_name().unwrap(), "Image 2026-11-03 120000 (2).png");
-        let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None }];
+        let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None, track: None }];
         prune(&dir, kept.iter());
         assert!(a.exists() && !b.exists());
     }
@@ -558,6 +640,44 @@ mod tests {
         assert_eq!(s.restore(cleared), 1);
         let names: Vec<String> = s.items.iter().map(|i| name(&i.kind)).collect();
         assert_eq!(names, ["b.txt", "n.txt", "a.txt"]);
+    }
+
+    #[test]
+    fn reads_the_format_before_extra_fields() {
+        let mut v2 = MAGIC_V2.to_vec();
+        v2.extend_from_slice(&1u32.to_le_bytes());
+        v2.extend_from_slice(&0u32.to_le_bytes());
+        put_str(&mut v2, "Old");
+        v2.extend_from_slice(&1u32.to_le_bytes());
+        v2.extend_from_slice(&3u64.to_le_bytes());
+        v2.push(2);
+        put_str(&mut v2, "https://example.com");
+        let s = Shelf::from_stacks(parse(&v2).unwrap());
+        assert_eq!(s.names, ["Old"]);
+        assert!(matches!(&s.items[0].kind, Kind::Link(l) if l == "https://example.com"));
+    }
+
+    #[test]
+    fn finds_a_file_moved_on_the_same_drive() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        let dir = std::env::temp_dir().join("cairn-track-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("later")).unwrap();
+        let (before, after) = (dir.join("report.txt"), dir.join("later").join("report.txt"));
+        fs::write(&before, "r").unwrap();
+        let mut s = shelf();
+        s.add(Dropped::Paths(vec![before.clone()]));
+        // The link data survives a save and load.
+        let mut s = Shelf::from_stacks(parse(&s.encode()).unwrap());
+        assert!(s.items[0].track.is_some());
+        fs::rename(&before, &after).unwrap();
+        let found = s.find_again(s.items[0].id).expect("found again");
+        let real = |p: &Path| fs::canonicalize(p).unwrap();
+        assert_eq!(real(&found), real(&after));
+        assert!(matches!(&s.items[0].kind, Kind::File(p) if real(p) == real(&after)));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

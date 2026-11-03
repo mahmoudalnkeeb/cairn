@@ -112,6 +112,7 @@ const A_COPY_MD: u32 = 3;
 const A_ZIP: u32 = 4;
 const A_COPY_TO: u32 = 5;
 const A_REMOVE: u32 = 6;
+const A_FIND: u32 = 7;
 const A_MOVE_BASE: u32 = 100;
 // Stack tab menu.
 const H_RENAME: u32 = 1;
@@ -248,26 +249,31 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
     if look.focused {
         p.stroke_rounded(tx + 0.5, ty + 0.5, TILE_W - 1.0, TILE_H - 1.0, 8.0, 1.0, t.primary);
     }
-    match item.icon.as_ref().and_then(|i| i.as_ref()) {
-        Some(icon) => {
-            let scale = (32.0 / icon.w.max(icon.h) as f32).min(1.0);
-            let (iw, ih) = (icon.w as f32 * scale, icon.h as f32 * scale);
-            p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
-        }
-        None => {
-            let glyph = match &item.kind {
-                Kind::File(_) => GLYPH_MISSING,
-                Kind::Text(_) => GLYPH_TEXT,
-                Kind::Link(_) => GLYPH_LINK,
-            };
-            if let Some(fm) = &f.icon32 {
-                p.text(glyph, fm, tx, ty + 8.0, TILE_W, 36.0, t.text);
+    // A missing file's icon and name are dimmed; its "Missing" label is not,
+    // so it stays readable.
+    let missing = matches!(&item.kind, Kind::File(p) if !p.exists());
+    p.layer(if missing { 0.5 } else { 1.0 }, 0.0, 0.0, |p| {
+        match item.icon.as_ref().and_then(|i| i.as_ref()) {
+            Some(icon) => {
+                let scale = (32.0 / icon.w.max(icon.h) as f32).min(1.0);
+                let (iw, ih) = (icon.w as f32 * scale, icon.h as f32 * scale);
+                p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
+            }
+            None => {
+                let glyph = match &item.kind {
+                    Kind::File(_) => GLYPH_MISSING,
+                    Kind::Text(_) => GLYPH_TEXT,
+                    Kind::Link(_) => GLYPH_LINK,
+                };
+                if let Some(fm) = &f.icon32 {
+                    p.text(glyph, fm, tx, ty + 8.0, TILE_W, 36.0, t.text);
+                }
             }
         }
-    }
-    if let Some(fm) = &f.name {
-        p.text(&shelf::name(&item.kind), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
-    }
+        if let Some(fm) = &f.name {
+            p.text(&shelf::name(&item.kind), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
+        }
+    });
     if let Some(fm) = &f.caption {
         p.text(shelf::kind_label(&item.kind), fm, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
     }
@@ -666,17 +672,25 @@ fn tile_menu(app: &mut App, at: POINT) {
     }
     // Copy what the actions need now: the menu and dialogs below can close
     // the flyout or change the stack.
-    let (text_paths, text_md, files, refs, first_is_text) = {
+    let (text_paths, text_md, files, refs, first_is_text, first_missing) = {
         let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| ids.contains(&i.id)).map(|i| &i.kind).collect();
         let refs = kinds.iter().any(|k| !matches!(k, Kind::Text(_)));
-        (actions::paths_text(&kinds), actions::markdown(&kinds), actions::existing_files(&kinds), refs, matches!(kinds[0], Kind::Text(_)))
+        let missing = match kinds[0] {
+            Kind::File(p) if !p.exists() => Some(p.clone()),
+            _ => None,
+        };
+        (actions::paths_text(&kinds), actions::markdown(&kinds), actions::existing_files(&kinds), refs, matches!(kinds[0], Kind::Text(_)), missing)
     };
     let one = ids.len() == 1;
+    let find = first_missing.filter(|_| one);
     let has_files = !files.is_empty();
     let menu = unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
         let on = |b: bool| if b { MF_ENABLED } else { MF_GRAYED };
-        if one {
+        if find.is_some() {
+            let _ = AppendMenuW(menu, MF_STRING, A_FIND as usize, w!("Find file…"));
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        } else if one {
             let open = if first_is_text { w!("Paste") } else { w!("Open") };
             let _ = AppendMenuW(menu, MF_STRING, A_OPEN as usize, open);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
@@ -712,6 +726,20 @@ fn tile_menu(app: &mut App, at: POINT) {
             close(app, false);
             if let Some(folder) = actions::pick_folder(HWND::default()) {
                 actions::copy_to(HWND::default(), &files, &folder);
+            }
+        }
+        A_FIND => {
+            let Some(old) = find else { return };
+            if app.stack.find_again(ids[0]).is_some() {
+                app.stack.save();
+                refresh(app);
+                return;
+            }
+            close(app, false);
+            if let Some(path) = actions::pick_file(HWND::default(), &old)
+                && app.stack.replace_path(ids[0], path)
+            {
+                app.stack.save();
             }
         }
         A_REMOVE => remove_selected(app),
@@ -934,6 +962,13 @@ pub fn activate(app: &mut App, index: usize) {
         Open(String),
         Paste(String),
     }
+    // A file moved on the same drive is found again before it counts as missing.
+    if let Some(item) = app.stack.items.get(index)
+        && matches!(&item.kind, Kind::File(p) if !p.exists())
+        && app.stack.find_again(item.id).is_some()
+    {
+        app.stack.save();
+    }
     let act = match app.stack.items.get(index).map(|i| &i.kind) {
         None => return,
         Some(Kind::File(p)) if !p.exists() => Act::Missing,
@@ -943,7 +978,7 @@ pub fn activate(app: &mut App, index: usize) {
         Some(Kind::Text(t)) => Act::Paste(t.clone()),
     };
     match act {
-        Act::Missing => crate::notify(app, "File not found", "It was moved or deleted. Press Del to remove it from the stack."),
+        Act::Missing => crate::notify(app, "File not found", "It was moved or deleted. Right-click it to find it, or press Del to remove it."),
         Act::Open(target) => {
             close(app, false);
             unsafe {
