@@ -271,7 +271,7 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
             }
         }
         if let Some(fm) = &f.name {
-            p.text(&shelf::name(&item.kind), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
+            p.text(&shelf::label(item), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
         }
     });
     if let Some(fm) = &f.caption {
@@ -673,13 +673,14 @@ fn tile_menu(app: &mut App, at: POINT) {
     // Copy what the actions need now: the menu and dialogs below can close
     // the flyout or change the stack.
     let (text_paths, text_md, files, refs, first_is_text, first_missing) = {
-        let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| ids.contains(&i.id)).map(|i| &i.kind).collect();
+        let items: Vec<&ShelfItem> = app.stack.items.iter().filter(|i| ids.contains(&i.id)).collect();
+        let kinds: Vec<&Kind> = items.iter().map(|i| &i.kind).collect();
         let refs = kinds.iter().any(|k| !matches!(k, Kind::Text(_)));
         let missing = match kinds[0] {
             Kind::File(p) if !p.exists() => Some(p.clone()),
             _ => None,
         };
-        (actions::paths_text(&kinds), actions::markdown(&kinds), actions::existing_files(&kinds), refs, matches!(kinds[0], Kind::Text(_)), missing)
+        (actions::paths_text(&kinds), actions::markdown(&items), actions::existing_files(&kinds), refs, matches!(kinds[0], Kind::Text(_)), missing)
     };
     let one = ids.len() == 1;
     let find = first_missing.filter(|_| one);

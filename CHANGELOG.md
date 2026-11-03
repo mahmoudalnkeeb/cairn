@@ -8,6 +8,7 @@ All notable changes to Cairn are listed here. Versions follow [Semantic Versioni
 
 - Email attachments, and files or folders dragged straight out of a zip, can be dropped or added with Ctrl+Alt+V. They have no place on disk, so Cairn saves its own copy, keeping their names and dates.
 - A picture dragged or copied from a web page is kept as a picture, not as its address, so it still works after the page is closed.
+- A link dragged from Chrome, Edge or Firefox shows its page title, and "Copy as Markdown link" uses it. Cairn never fetches the page to find a title.
 - A file moved to another folder on the same drive is found again when you open it from the stack.
 - "Find file…" on a missing file's right-click menu, to point the item at where the file is now.
 

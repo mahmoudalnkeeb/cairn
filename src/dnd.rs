@@ -301,9 +301,30 @@ pub fn read(data: &IDataObject) -> Option<Dropped> {
         {
             return Some(image);
         }
+        if crate::shelf::looks_like_link(&text)
+            && let Some(title) = link_title(data)
+        {
+            return Some(Dropped::Link { url: text, title });
+        }
         return Some(Dropped::Text(text));
     }
     read_image(data)
+}
+
+/// The page title a browser sends with a dragged link: Firefox as the second
+/// line of "text/x-moz-url", Chrome and Edge as the name of the .url file
+/// they offer alongside it.
+fn link_title(data: &IDataObject) -> Option<String> {
+    let moz = read_utf16(data, registered(w!("text/x-moz-url")));
+    let from_moz = moz.as_deref().and_then(|m| m.split_once('\n')).map(|(_, t)| t.trim().to_string());
+    let from_file = || match &parse_descriptors(&read_bytes(data, descriptor_format())?)?[..] {
+        [one] => {
+            let n = one.name.len().checked_sub(4)?;
+            one.name[n..].eq_ignore_ascii_case(".url").then(|| one.name[..n].trim().to_string())
+        }
+        _ => None,
+    };
+    from_moz.filter(|t| !t.is_empty()).or_else(from_file).filter(|t| !t.is_empty())
 }
 
 fn read_image(data: &IDataObject) -> Option<Dropped> {
@@ -655,20 +676,43 @@ mod tests {
         assert!(matches!(with("Q3\t1200"), Some(Dropped::Text(t)) if t == "Q3\t1200"));
     }
 
+    /// One FILEDESCRIPTORW as bytes.
+    fn entry(name: &str, flags: u32, attrs: u32) -> Vec<u8> {
+        let mut d: FILEDESCRIPTORW = unsafe { std::mem::zeroed() };
+        d.dwFlags = flags;
+        d.dwFileAttributes = attrs;
+        d.ftLastWriteTime = FILETIME { dwLowDateTime: 1, dwHighDateTime: 2 };
+        let mut units = [0u16; 260];
+        for (u, c) in units.iter_mut().zip(name.encode_utf16()) {
+            *u = c;
+        }
+        d.cFileName = units;
+        unsafe { std::slice::from_raw_parts(&d as *const _ as *const u8, size_of::<FILEDESCRIPTORW>()) }.to_vec()
+    }
+
+    #[test]
+    fn dragged_links_keep_their_page_title() {
+        let link = |extra: &dyn Fn(&IDataObject)| {
+            let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None) }.unwrap();
+            set_utf16(&obj, url_format(), "https://example.com/notes").unwrap();
+            extra(&obj);
+            read(&obj)
+        };
+        // Firefox.
+        let firefox = link(&|o| set_utf16(o, registered(w!("text/x-moz-url")), "https://example.com/notes\nRelease notes").unwrap());
+        assert!(matches!(firefox, Some(Dropped::Link { title, .. }) if title == "Release notes"));
+        // Chrome and Edge offer the link as "<title>.url"; it stays a link.
+        let chrome = link(&|o| {
+            let mut bytes = 1u32.to_le_bytes().to_vec();
+            bytes.extend(entry("Release notes.url", 0, 0));
+            set_global(o, descriptor_format(), &bytes).unwrap();
+        });
+        assert!(matches!(chrome, Some(Dropped::Link { url, title }) if title == "Release notes" && url == "https://example.com/notes"));
+        assert!(matches!(link(&|_| {}), Some(Dropped::Text(_))));
+    }
+
     #[test]
     fn reads_file_descriptors() {
-        let entry = |name: &str, flags: u32, attrs: u32| {
-            let mut d: FILEDESCRIPTORW = unsafe { std::mem::zeroed() };
-            d.dwFlags = flags;
-            d.dwFileAttributes = attrs;
-            d.ftLastWriteTime = FILETIME { dwLowDateTime: 1, dwHighDateTime: 2 };
-            let mut units = [0u16; 260];
-            for (u, c) in units.iter_mut().zip(name.encode_utf16()) {
-                *u = c;
-            }
-            d.cFileName = units;
-            unsafe { std::slice::from_raw_parts(&d as *const _ as *const u8, size_of::<FILEDESCRIPTORW>()) }.to_vec()
-        };
         let mut bytes = 2u32.to_le_bytes().to_vec();
         bytes.extend(entry("Photos", FD_ATTRIBUTES.0 as u32, FILE_ATTRIBUTE_DIRECTORY.0));
         bytes.extend(entry("Photos\\ü.jpg", FD_WRITESTIME.0 as u32, 0));

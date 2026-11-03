@@ -24,6 +24,7 @@
 - Open the stack from the edge, the tray icon or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>, and drag items into any app that accepts drops: Explorer, browsers, email, chat.
 - Select several items and drag them out in one go, even files from different folders.
 - Keep separate stacks for separate jobs, shown as tabs at the top of the stack.
+- A link dragged from a browser shows its page title.
 - Right-click items to copy their paths, copy them as Markdown links, save them as a zip, copy them to a folder or move them to another stack.
 - Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> to add whatever is on the clipboard.
 - Open a file or link with a double-click. A text item pastes into the app you came from.

@@ -18,7 +18,7 @@ use windows::core::*;
 use zip::write::SimpleFileOptions;
 use zip::{DateTime, ZipWriter};
 
-use crate::shelf::{self, Kind};
+use crate::shelf::{self, Kind, ShelfItem};
 
 /// Posted to the host window when a zip finishes: wParam is 1 on success.
 pub const WM_ZIP_DONE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 2;
@@ -49,13 +49,14 @@ pub fn file_url(path: &Path) -> String {
     out
 }
 
-/// One Markdown link per file or link, as a list when there are several.
-pub fn markdown(kinds: &[&Kind]) -> String {
-    let links: Vec<String> = kinds
+/// One Markdown link per file or link, labelled with its tile name (a page
+/// title when there is one), as a list when there are several.
+pub fn markdown(items: &[&ShelfItem]) -> String {
+    let links: Vec<String> = items
         .iter()
-        .filter_map(|k| {
-            let label = shelf::name(k).replace('[', "\\[").replace(']', "\\]");
-            match k {
+        .filter_map(|item| {
+            let label = shelf::label(item).replace('[', "\\[").replace(']', "\\]");
+            match &item.kind {
                 Kind::File(p) => Some(format!("[{label}]({})", file_url(p))),
                 Kind::Link(l) if l.starts_with("www.") => Some(format!("[{label}](https://{l})")),
                 Kind::Link(l) => Some(format!("[{label}]({l})")),
@@ -225,10 +226,11 @@ mod tests {
 
     #[test]
     fn markdown_links_escape_paths_and_labels() {
-        let f = Kind::File("C:\\My Docs\\[draft] #1.md".into());
+        let item = |kind, title: Option<&str>| ShelfItem { id: 0, kind, icon: None, track: None, title: title.map(Into::into) };
+        let f = item(Kind::File("C:\\My Docs\\[draft] #1.md".into()), None);
         assert_eq!(markdown(&[&f]), "[\\[draft\\] #1.md](file:///C:/My%20Docs/%5Bdraft%5D%20%231.md)");
-        let (a, b) = (Kind::Link("www.e.com/x".into()), Kind::Link("https://e.com".into()));
-        assert_eq!(markdown(&[&a, &b]), "- [e.com/x](https://www.e.com/x)\r\n- [e.com](https://e.com)");
+        let (a, b) = (item(Kind::Link("www.e.com/x".into()), None), item(Kind::Link("https://e.com".into()), Some("E [home]")));
+        assert_eq!(markdown(&[&a, &b]), "- [e.com/x](https://www.e.com/x)\r\n- [E \\[home\\]](https://e.com)");
     }
 
     #[test]
