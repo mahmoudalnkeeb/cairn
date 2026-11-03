@@ -11,6 +11,7 @@ use windows::Win32::UI::Shell::*;
 use windows::core::{HSTRING, Interface};
 
 
+use crate::detect::{self, Form};
 use crate::store;
 
 const MAGIC: &[u8; 8] = b"CAIRNST3";
@@ -24,6 +25,10 @@ const FIELD_TRACK: u8 = 1;
 const FIELD_TITLE: u8 = 2;
 const FIELD_HTML: u8 = 3;
 const FIELD_RTF: u8 = 4;
+const FIELD_FORM: u8 = 5;
+/// `Extra::form` values: the user chose "Show as text" or "Show as code".
+pub const AS_TEXT: u8 = 1;
+pub const AS_CODE: u8 = 2;
 const ICON_PX: i32 = 48;
 
 /// Premultiplied BGRA pixels, ready for Direct2D.
@@ -68,6 +73,8 @@ pub struct Extra {
     /// "HTML Format" (with its header) and "Rich Text Format".
     pub html: Option<Vec<u8>>,
     pub rtf: Option<Vec<u8>>,
+    /// Overrides whether plain text shows as code: `AS_TEXT` or `AS_CODE`.
+    pub form: Option<u8>,
 }
 
 impl Extra {
@@ -77,6 +84,7 @@ impl Extra {
             (FIELD_TITLE, self.title.as_deref().map(str::as_bytes)),
             (FIELD_HTML, self.html.as_deref()),
             (FIELD_RTF, self.rtf.as_deref()),
+            (FIELD_FORM, self.form.as_ref().map(std::slice::from_ref)),
         ]
         .into_iter()
         .filter_map(|(key, v)| Some((key, v?)))
@@ -89,6 +97,7 @@ impl Extra {
             FIELD_TITLE => self.title = String::from_utf8(bytes).ok(),
             FIELD_HTML => self.html = Some(bytes),
             FIELD_RTF => self.rtf = Some(bytes),
+            FIELD_FORM => self.form = bytes.first().copied(),
             _ => {}
         }
     }
@@ -301,6 +310,13 @@ impl Shelf {
         Some(found)
     }
 
+    /// "Show as text" or "Show as code" for a text item in the current stack.
+    pub fn set_form(&mut self, id: u64, form: u8) {
+        if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+            item.extra.form = Some(form);
+        }
+    }
+
     /// Deletes Cairn's own copies that no stack refers to any more. Items in
     /// `keep` (waiting for undo) count as referred to.
     pub fn prune_owned(&self, keep: &[ShelfItem]) {
@@ -490,13 +506,37 @@ pub fn name(kind: &Kind) -> String {
     }
 }
 
-/// The name on an item's tile: a link's page title if it has one.
+/// What a plain text item holds: a color, code, an email address, a phone
+/// number or just text. None for other items, and for rich text.
+pub fn form(item: &ShelfItem) -> Option<Form> {
+    match &item.kind {
+        Kind::Text(t) if !item.extra.is_rich() => Some(match item.extra.form {
+            Some(AS_TEXT) => Form::Text,
+            Some(AS_CODE) => Form::Code,
+            _ => detect::detect(t),
+        }),
+        _ => None,
+    }
+}
+
+/// The name on an item's tile: a link's page title if it has one, the first
+/// line of code.
 pub fn label(item: &ShelfItem) -> String {
-    item.extra.title.clone().unwrap_or_else(|| name(&item.kind))
+    match (&item.kind, form(item)) {
+        (Kind::Text(t), Some(Form::Code)) => preview(t.lines().find(|l| !l.trim().is_empty()).unwrap_or_default()),
+        _ => item.extra.title.clone().unwrap_or_else(|| name(&item.kind)),
+    }
 }
 
 /// The kind word shown under the name.
 pub fn kind_label(item: &ShelfItem) -> &'static str {
+    match form(item) {
+        Some(Form::Code) => return "Code",
+        Some(Form::Color(_)) => return "Color",
+        Some(Form::Email) => return "Email",
+        Some(Form::Phone) => return "Phone",
+        _ => {}
+    }
     match &item.kind {
         Kind::Text(_) if item.extra.is_rich() => "Rich text",
         Kind::File(p) if p.is_dir() => "Folder",
@@ -766,5 +806,11 @@ mod tests {
         assert_eq!(kind_label(&rich), "Text");
         rich.extra.rtf = Some(b"{\\rtf1 \\b bold}".to_vec());
         assert_eq!(kind_label(&rich), "Rich text");
+        let mut code = item(Kind::Text("\nfn main() {\n    run();\n}".into()));
+        assert_eq!((kind_label(&code), label(&code).as_str()), ("Code", "fn main() {"));
+        code.extra.form = Some(AS_TEXT);
+        assert_eq!(kind_label(&code), "Text");
+        assert_eq!(kind_label(&item(Kind::Text("#3b82f6".into()))), "Color");
+        assert_eq!(kind_label(&item(Kind::Text("dana@example.com".into()))), "Email");
     }
 }

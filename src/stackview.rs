@@ -14,7 +14,8 @@ use windows::Win32::UI::Shell::{SHDRAGIMAGE, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
-use crate::gfx::{Gfx, Painter, Surface, Theme, Tween};
+use crate::detect::{self, Form};
+use crate::gfx::{Color, Gfx, Painter, Surface, Theme, Tween};
 use crate::select::Selection;
 use crate::shelf::{self, Kind, ShelfItem};
 use crate::settings::Edge;
@@ -50,6 +51,9 @@ const ANIM_TIMER: usize = 1;
 const GLYPH_TEXT: &str = "\u{E8A5}";
 const GLYPH_LINK: &str = "\u{E71B}";
 const GLYPH_MISSING: &str = "\u{E7BA}";
+const GLYPH_CODE: &str = "\u{E943}";
+const GLYPH_MAIL: &str = "\u{E715}";
+const GLYPH_PHONE: &str = "\u{E717}";
 const GLYPH_ADD: &str = "\u{E710}";
 const GLYPH_REMOVE: &str = "\u{E711}";
 
@@ -115,6 +119,10 @@ const A_COPY_TO: u32 = 5;
 const A_REMOVE: u32 = 6;
 const A_FIND: u32 = 7;
 const A_COPY_PLAIN: u32 = 8;
+const A_COPY_HEX: u32 = 9;
+const A_COPY_RGB: u32 = 10;
+const A_COPY_HSL: u32 = 11;
+const A_SHOW_AS: u32 = 12;
 const A_MOVE_BASE: u32 = 100;
 // Stack tab menu.
 const H_RENAME: u32 = 1;
@@ -222,6 +230,7 @@ struct Fonts {
     caption: Option<IDWriteTextFormat>,
     icon32: Option<IDWriteTextFormat>,
     icon12: Option<IDWriteTextFormat>,
+    code: Option<IDWriteTextFormat>,
 }
 
 fn fonts(g: &Gfx) -> Fonts {
@@ -231,6 +240,7 @@ fn fonts(g: &Gfx) -> Fonts {
         caption: fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL),
         icon32: fmt(&g.icon_font, 28.0, DWRITE_FONT_WEIGHT_NORMAL),
         icon12: fmt(&g.icon_font, 10.0, DWRITE_FONT_WEIGHT_NORMAL),
+        code: fmt(&g.code_font, 13.0, DWRITE_FONT_WEIGHT_NORMAL),
     }
 }
 
@@ -254,6 +264,7 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
     // A missing file's icon and name are dimmed; its "Missing" label is not,
     // so it stays readable.
     let missing = matches!(&item.kind, Kind::File(p) if !p.exists());
+    let form = shelf::form(item);
     p.layer(if missing { 0.5 } else { 1.0 }, 0.0, 0.0, |p| {
         match item.icon.as_ref().and_then(|i| i.as_ref()) {
             Some(icon) => {
@@ -261,24 +272,52 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
                 let (iw, ih) = (icon.w as f32 * scale, icon.h as f32 * scale);
                 p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
             }
-            None => {
-                let glyph = match &item.kind {
-                    Kind::File(_) => GLYPH_MISSING,
-                    Kind::Text(_) => GLYPH_TEXT,
-                    Kind::Link(_) => GLYPH_LINK,
-                };
-                if let Some(fm) = &f.icon32 {
-                    p.text(glyph, fm, tx, ty + 8.0, TILE_W, 36.0, t.text);
+            None => match form {
+                Some(Form::Color(c)) => swatch(p, t, tx + (TILE_W - SWATCH) / 2.0, ty + 12.0, c),
+                _ => {
+                    let glyph = match (&item.kind, form) {
+                        (Kind::File(_), _) => GLYPH_MISSING,
+                        (Kind::Link(_), _) => GLYPH_LINK,
+                        (_, Some(Form::Code)) => GLYPH_CODE,
+                        (_, Some(Form::Email)) => GLYPH_MAIL,
+                        (_, Some(Form::Phone)) => GLYPH_PHONE,
+                        _ => GLYPH_TEXT,
+                    };
+                    if let Some(fm) = &f.icon32 {
+                        p.text(glyph, fm, tx, ty + 8.0, TILE_W, 36.0, t.text);
+                    }
                 }
-            }
+            },
         }
-        if let Some(fm) = &f.name {
+        // Colors and code read best in the code font, as they were typed.
+        let font = if matches!(form, Some(Form::Code | Form::Color(_))) { &f.code } else { &f.name };
+        if let Some(fm) = font {
             p.text(&shelf::label(item), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
         }
     });
     if let Some(fm) = &f.caption {
         p.text(shelf::kind_label(item), fm, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
     }
+}
+
+const SWATCH: f32 = 28.0;
+
+/// A color item's tile picture: the color in a small rounded square, over a
+/// checkerboard when it is see-through, with an outline so a color close to
+/// the tile still shows.
+fn swatch(p: &Painter, t: &Theme, x: f32, y: f32, [r, g, b, a]: [u8; 4]) {
+    const CELL: f32 = SWATCH / 4.0;
+    if a < 255 {
+        for i in 0..4 {
+            for j in 0..4 {
+                let c = if (i + j) % 2 == 0 { t.surface_sunken } else { t.surface };
+                p.fill_rect(x + i as f32 * CELL, y + j as f32 * CELL, CELL, CELL, c);
+            }
+        }
+    }
+    let color = Color(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0);
+    p.fill_rounded(x, y, SWATCH, SWATCH, 4.0, color);
+    p.stroke_rounded(x + 0.5, y + 0.5, SWATCH - 1.0, SWATCH - 1.0, 4.0, 1.0, t.outline);
 }
 
 /// What a drag out shows under the cursor: the grabbed tile, the rest of
@@ -690,6 +729,13 @@ fn tile_menu(app: &mut App, at: POINT) {
         Some(ShelfItem { kind: Kind::Text(t), extra, .. }) if one && extra.is_rich() => Some(t.clone()),
         _ => None,
     };
+    // A color's other notations, and switching text between text and code.
+    let (color, show_as) = match app.stack.items.iter().find(|i| i.id == ids[0]).filter(|_| one).and_then(shelf::form) {
+        Some(Form::Color(c)) => (Some(c), None),
+        Some(Form::Code) => (None, Some(shelf::AS_TEXT)),
+        Some(Form::Text) => (None, Some(shelf::AS_CODE)),
+        _ => (None, None),
+    };
     let has_files = !files.is_empty();
     let menu = unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
@@ -704,6 +750,14 @@ fn tile_menu(app: &mut App, at: POINT) {
         }
         if plain.is_some() {
             let _ = AppendMenuW(menu, MF_STRING, A_COPY_PLAIN as usize, w!("Copy as plain text"));
+        }
+        if color.is_some() {
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_HEX as usize, w!("Copy as hex"));
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_RGB as usize, w!("Copy as RGB"));
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_HSL as usize, w!("Copy as HSL"));
+        }
+        if let Some(f) = show_as {
+            let _ = AppendMenuW(menu, MF_STRING, A_SHOW_AS as usize, if f == shelf::AS_TEXT { w!("Show as text") } else { w!("Show as code") });
         }
         let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_PATHS as usize, if one { w!("Copy path") } else { w!("Copy paths") });
         let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_MD as usize, w!("Copy as Markdown link"));
@@ -721,11 +775,28 @@ fn tile_menu(app: &mut App, at: POINT) {
         let _ = AppendMenuW(menu, MF_STRING, A_REMOVE as usize, w!("Remove"));
         menu
     };
-    match popup(app.stack_view.hwnd, menu, at) {
+    let cmd = popup(app.stack_view.hwnd, menu, at);
+    match cmd {
         A_OPEN => activate(app, app.stack.items.iter().position(|i| i.id == ids[0]).unwrap_or(0)),
         A_COPY_PATHS => copy_text(app, &text_paths, if one { "Path copied" } else { "Paths copied" }),
         A_COPY_MD => copy_text(app, &text_md, "Markdown copied"),
         A_COPY_PLAIN => copy_text(app, plain.as_deref().unwrap_or_default(), "Text copied"),
+        A_COPY_HEX | A_COPY_RGB | A_COPY_HSL => {
+            let Some(c) = color else { return };
+            let text = match cmd {
+                A_COPY_HEX => detect::hex(c),
+                A_COPY_RGB => detect::rgb(c),
+                _ => detect::hsl(c),
+            };
+            copy_text(app, &text, "Color copied");
+        }
+        A_SHOW_AS => {
+            let Some(f) = show_as else { return };
+            app.stack.set_form(ids[0], f);
+            app.stack.save();
+            render(app);
+            announce(app);
+        }
         A_ZIP => {
             close(app, false);
             if let Some(out) = actions::pick_zip(HWND::default(), &files[0]) {
@@ -988,6 +1059,8 @@ pub fn activate(app: &mut App, index: usize) {
         Kind::File(p) => Act::Open(p.to_string_lossy().into_owned()),
         Kind::Link(l) if l.starts_with("www.") => Act::Open(format!("https://{l}")),
         Kind::Link(l) => Act::Open(l.clone()),
+        Kind::Text(t) if shelf::form(item) == Some(Form::Email) => Act::Open(format!("mailto:{}", t.trim())),
+        Kind::Text(t) if shelf::form(item) == Some(Form::Phone) => Act::Open(format!("tel:{}", t.trim().replace(' ', ""))),
         Kind::Text(t) => match dnd::data_object(item).filter(|_| item.extra.is_rich()) {
             Some(data) => Act::PasteRich(data),
             None => Act::Paste(t.clone()),

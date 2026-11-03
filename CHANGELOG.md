@@ -10,6 +10,9 @@ All notable changes to Cairn are listed here. Versions follow [Semantic Versioni
 - A picture dragged or copied from a web page is kept as a picture, not as its address, so it still works after the page is closed.
 - A link dragged from Chrome, Edge or Firefox shows its page title, and "Copy as Markdown link" uses it. Cairn never fetches the page to find a title.
 - Text from a web page, Word or an email keeps its formatting and links, shown as "Rich text". Dragging it out or pasting it gives each app the best version it takes. "Copy as plain text" is on its right-click menu.
+- A color such as `#3b82f6`, `rgb()` or `hsl()` shows as a swatch. Right-click it to copy it as hex, RGB or HSL.
+- Code and commands show in Cascadia Mono, named by their first line. If Cairn guesses wrong, right-click for "Show as text" or "Show as code".
+- An email address or phone number gets its own tile. Double-click to start a message or a call.
 - A file moved to another folder on the same drive is found again when you open it from the stack.
 - "Find file…" on a missing file's right-click menu, to point the item at where the file is now.
 

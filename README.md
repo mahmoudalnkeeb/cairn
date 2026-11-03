@@ -25,6 +25,7 @@
 - Select several items and drag them out in one go, even files from different folders.
 - Keep separate stacks for separate jobs, shown as tabs at the top of the stack.
 - A link dragged from a browser shows its page title.
+- Cairn shows what a text holds: a color as a swatch (right-click to copy it as hex, RGB or HSL), code in a monospace font with its spacing kept, and an email address or phone number that opens a new message or call on double-click. Right-click text to show it as code, or code to show it as text.
 - Right-click items to copy their paths, copy them as Markdown links, save them as a zip, copy them to a folder or move them to another stack.
 - Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> to add whatever is on the clipboard.
 - Open a file or link with a double-click. A text item pastes into the app you came from.

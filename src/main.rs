@@ -6,6 +6,7 @@
 mod a11y;
 mod actions;
 mod clipboard;
+mod detect;
 mod dnd;
 mod edgetab;
 mod gfx;
