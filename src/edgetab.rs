@@ -18,7 +18,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
-use crate::gfx::{Color, Surface, bezier};
+use crate::gfx::{Color, Surface, Tween, bezier};
 use crate::settings::Edge;
 use crate::{App, dnd, dpi_at};
 
@@ -35,6 +35,8 @@ const PILL_GAP: f32 = 3.0;
 const OPEN_MS: f32 = 140.0;
 const CLOSE_MS: f32 = 120.0;
 const FLASH_MS: u32 = 700;
+/// The lichen pulse a drop sets off.
+const PULSE_MS: f32 = 600.0;
 const ANIM_TIMER: usize = 1;
 const FLASH_TIMER: usize = 2;
 
@@ -95,6 +97,8 @@ pub struct EdgeTab {
     progress: f32,
     from: f32,
     start: Instant,
+    /// Fades from 1 to 0 after a drop.
+    pulse: Tween,
 }
 
 impl EdgeTab {
@@ -161,6 +165,7 @@ pub fn sync(app: &mut App) {
             progress: 0.0,
             from: 0.0,
             start: Instant::now(),
+            pulse: Tween::new(0.0),
         });
     }
     for (t, m) in app.tabs.iter_mut().zip(want) {
@@ -240,6 +245,7 @@ pub fn render(app: &mut App, i: usize) {
     let lerp = |a: f32, b: f32| a + (b - a) * p;
     let caption = g.text_format(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL).ok();
     let flash = t.flash.clone();
+    let pulse = t.pulse.value();
     let hover = t.hover || t.press.is_some_and(|(_, _, moved)| moved);
     let _ = surf.draw(t.dpi, |d| {
         // The hit strip: alpha 1/255, invisible but it catches drags.
@@ -258,6 +264,9 @@ pub fn render(app: &mut App, i: usize) {
         d.rect_shadow(x, y + 6.0, w, h, r, 12.0 * p, 0.45 * th.shadow * p);
         d.fill_rounded(x, y, w, h, r, th.surface_flyout.alpha(p));
         d.fill_rounded(x, y, w, h, r, th.primary_subtle.alpha(p));
+        if pulse > 0.0 {
+            d.fill_rounded(x, y, w, h, r, th.primary.alpha(0.28 * pulse * p));
+        }
         d.stroke_rounded_dashed(x + 0.75, y + 0.75, w - 1.5, h - 1.5, r, 1.5, th.primary.alpha(p));
         if p > 0.6 {
             let a = (p - 0.6) / 0.4;
@@ -307,7 +316,7 @@ fn tick(app: &mut App, i: usize) {
     let dur = if target > t.from { OPEN_MS } else { CLOSE_MS };
     let k = if animations { (t.start.elapsed().as_secs_f32() * 1000.0 / dur).min(1.0) } else { 1.0 };
     t.progress = t.from + (target - t.from) * bezier(0.0, 0.0, 0.0, 1.0, k);
-    if k >= 1.0 {
+    if k >= 1.0 && t.pulse.done() {
         unsafe {
             let _ = KillTimer(t.hwnd, ANIM_TIMER);
         }
@@ -335,6 +344,9 @@ pub fn dropped(app: &mut App, i: usize, added: usize) {
         0 => "Already here".to_string(),
         n => format!("Added {n}"),
     });
+    if added > 0 && app.animations {
+        t.pulse.run(1.0, 0.0, PULSE_MS);
+    }
     unsafe {
         SetTimer(t.hwnd, FLASH_TIMER, FLASH_MS, None);
     }

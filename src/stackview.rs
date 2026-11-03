@@ -9,13 +9,13 @@ use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
-use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::Shell::{SHDRAGIMAGE, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
-use crate::gfx::Surface;
+use crate::gfx::{Gfx, Painter, Surface, Theme, Tween};
 use crate::select::Selection;
-use crate::shelf::{self, Kind};
+use crate::shelf::{self, Kind, ShelfItem};
 use crate::settings::Edge;
 use crate::{App, a11y, actions, clipboard, dnd, dpi_at, edgetab};
 
@@ -33,6 +33,18 @@ const CARD_W: f32 = M * 2.0 + COLS as f32 * TILE_W + (COLS - 1) as f32 * GAP;
 const CARD_H: f32 = FOOTER_Y + 16.0 + M;
 const REMOVE: f32 = 20.0;
 const GAP_FROM_TAB: f32 = 8.0;
+
+// Motion (BRAND.md): open 140 ms, close 120, hover 120, the drop flash
+// 600, and new tiles settle in from 4 px above over 160.
+const OPEN_MS: f32 = 140.0;
+const CLOSE_MS: f32 = 120.0;
+const HOVER_MS: f32 = 120.0;
+const FLASH_MS: f32 = 600.0;
+const SETTLE_MS: f32 = 160.0;
+/// How far the card slides in from the tab while it opens, in DIPs.
+const SLIDE: f32 = 8.0;
+const SETTLE_DROP: f32 = 4.0;
+const ANIM_TIMER: usize = 1;
 
 const GLYPH_TEXT: &str = "\u{E8A5}";
 const GLYPH_LINK: &str = "\u{E71B}";
@@ -68,6 +80,18 @@ pub struct StackView {
     /// The current stack's name while it is being renamed. `fresh` means the
     /// first key typed replaces it.
     editing: Option<(String, bool)>,
+    /// 0 hidden, 1 open: fades the card in and slides it from the tab.
+    show: Tween,
+    /// The drop-hover tint.
+    drop_t: Tween,
+    /// The lichen flash after a drop, fading from 1 to 0.
+    flash: Tween,
+    /// Items a drop just added, settling into place as `settle` runs to 1.
+    fresh: Vec<u64>,
+    settle: Tween,
+    /// Items being dragged out, drawn lifted out of their slots.
+    lifted: Vec<u64>,
+    lift: Tween,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -117,8 +141,179 @@ impl StackView {
             add_x: 0.0,
             last_head_click: None,
             editing: None,
+            show: Tween::new(0.0),
+            drop_t: Tween::new(0.0),
+            flash: Tween::new(0.0),
+            fresh: Vec::new(),
+            settle: Tween::new(1.0),
+            lifted: Vec::new(),
+            lift: Tween::new(0.0),
         }
     }
+}
+
+/// A transition's length, or none when Windows animations are off.
+fn ms(app: &App, ms: f32) -> f32 {
+    if app.animations { ms } else { 0.0 }
+}
+
+/// Runs the animation timer until every transition has finished.
+fn animate(app: &mut App) {
+    if app.animations {
+        unsafe {
+            SetTimer(app.stack_view.hwnd, ANIM_TIMER, 10, None);
+        }
+    }
+    tick(app);
+}
+
+fn tick(app: &mut App) {
+    render(app);
+    let v = &mut app.stack_view;
+    if v.settle.done() {
+        v.fresh.clear();
+    }
+    if v.lift.done() && v.lift.target() == 0.0 {
+        v.lifted.clear();
+    }
+    let all = [v.show, v.drop_t, v.flash, v.settle, v.lift];
+    if all.iter().all(Tween::done) {
+        unsafe {
+            let _ = KillTimer(v.hwnd, ANIM_TIMER);
+        }
+    }
+    if !v.open && v.show.done() {
+        unsafe {
+            let _ = ShowWindow(v.hwnd, SW_HIDE);
+        }
+    }
+}
+
+/// A drag carrying something Cairn accepts is over the stack, or left it.
+pub fn set_drop_hover(app: &mut App, over: bool) {
+    let d = ms(app, HOVER_MS);
+    let v = &mut app.stack_view;
+    v.drop_hover = over;
+    v.drop_t.set(if over { 1.0 } else { 0.0 }, d);
+    animate(app);
+}
+
+/// After a drop or paste while the stack is open: the `n` new items at the
+/// front settle in and the stack flashes once.
+pub fn added(app: &mut App, n: usize) {
+    refresh(app);
+    if n == 0 {
+        return;
+    }
+    let fresh = app.stack.items.iter().take(n).map(|i| i.id).collect();
+    let (flash, settle) = (ms(app, FLASH_MS), ms(app, SETTLE_MS));
+    let v = &mut app.stack_view;
+    v.fresh = fresh;
+    v.flash.run(1.0, 0.0, flash);
+    v.settle.run(0.0, 1.0, settle);
+    animate(app);
+}
+
+struct Fonts {
+    name: Option<IDWriteTextFormat>,
+    caption: Option<IDWriteTextFormat>,
+    icon32: Option<IDWriteTextFormat>,
+    icon12: Option<IDWriteTextFormat>,
+}
+
+fn fonts(g: &Gfx) -> Fonts {
+    let fmt = |family, size, weight| g.text_format_aligned(family, size, weight, DWRITE_TEXT_ALIGNMENT_CENTER).ok();
+    Fonts {
+        name: fmt(&g.ui_font, 14.0, DWRITE_FONT_WEIGHT_SEMI_BOLD),
+        caption: fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL),
+        icon32: fmt(&g.icon_font, 28.0, DWRITE_FONT_WEIGHT_NORMAL),
+        icon12: fmt(&g.icon_font, 10.0, DWRITE_FONT_WEIGHT_NORMAL),
+    }
+}
+
+#[derive(Default)]
+struct Look {
+    hovered: bool,
+    selected: bool,
+    focused: bool,
+}
+
+/// One tile: its card, icon or thumbnail, name and kind.
+fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f32, look: Look) {
+    p.rect_shadow(tx, ty + 1.0, TILE_W, TILE_H, 8.0, 2.0, 0.4 * t.shadow);
+    p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, if look.hovered { t.surface_hover } else { t.surface });
+    if look.selected {
+        p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, t.primary_subtle);
+    }
+    if look.focused {
+        p.stroke_rounded(tx + 0.5, ty + 0.5, TILE_W - 1.0, TILE_H - 1.0, 8.0, 1.0, t.primary);
+    }
+    match item.icon.as_ref().and_then(|i| i.as_ref()) {
+        Some(icon) => {
+            let scale = (32.0 / icon.w.max(icon.h) as f32).min(1.0);
+            let (iw, ih) = (icon.w as f32 * scale, icon.h as f32 * scale);
+            p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
+        }
+        None => {
+            let glyph = match &item.kind {
+                Kind::File(_) => GLYPH_MISSING,
+                Kind::Text(_) => GLYPH_TEXT,
+                Kind::Link(_) => GLYPH_LINK,
+            };
+            if let Some(fm) = &f.icon32 {
+                p.text(glyph, fm, tx, ty + 8.0, TILE_W, 36.0, t.text);
+            }
+        }
+    }
+    if let Some(fm) = &f.name {
+        p.text(&shelf::name(&item.kind), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
+    }
+    if let Some(fm) = &f.caption {
+        p.text(shelf::kind_label(&item.kind), fm, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
+    }
+}
+
+/// What a drag out shows under the cursor: the grabbed tile, the rest of
+/// the selection stacked behind it, and a count when there are several.
+fn drag_image(app: &App, index: usize, count: usize, grab: POINT) -> Option<SHDRAGIMAGE> {
+    const X: f32 = 6.0;
+    const Y: f32 = 14.0;
+    let item = app.stack.items.get(index)?;
+    let rect = tile_screen_rect(app, index)?;
+    let dpi = app.stack_view.dpi;
+    let s = dpi as f32 / 96.0;
+    let (w, h) = (((X + TILE_W + 22.0) * s).ceil() as i32, ((Y + TILE_H + 8.0) * s).ceil() as i32);
+    let surf = Surface::new(&app.gfx, w, h).ok()?;
+    let (g, t, f) = (&app.gfx, &app.theme, fonts(&app.gfx));
+    let badge = g.text_format_aligned(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER).ok();
+    surf.draw(dpi, |p| {
+        p.rect_shadow(X, Y + 3.0, TILE_W, TILE_H, 8.0, 6.0, 0.5 * t.shadow);
+        for k in (1..count.min(3)).rev() {
+            let o = 4.0 * k as f32;
+            p.fill_rounded(X + o, Y - o, TILE_W, TILE_H, 8.0, t.surface);
+            p.stroke_rounded(X + o + 0.5, Y - o + 0.5, TILE_W - 1.0, TILE_H - 1.0, 8.0, 1.0, t.outline);
+        }
+        draw_tile(p, t, &f, item, X, Y, Look::default());
+        p.stroke_rounded(X + 0.5, Y + 0.5, TILE_W - 1.0, TILE_H - 1.0, 8.0, 1.0, t.outline);
+        if count > 1
+            && let Some(fm) = &badge
+        {
+            let label = count.to_string();
+            let bw = (g.text_width(&label, fm) + 12.0).max(20.0);
+            let (bx, by) = (X + TILE_W + 2.0 - bw / 2.0, Y - 10.0);
+            p.fill_rounded(bx, by, bw, 20.0, 10.0, t.primary);
+            p.text(&label, fm, bx, by, bw, 20.0, t.surface);
+        }
+    })
+    .ok()?;
+    let offset = POINT { x: grab.x - rect.left + (X * s) as i32, y: grab.y - rect.top + (Y * s) as i32 };
+    Some(SHDRAGIMAGE {
+        sizeDragImage: SIZE { cx: w, cy: h },
+        ptOffset: offset,
+        hbmpDragImage: surf.into_bitmap(),
+        // No color key: the bitmap's own alpha shapes it.
+        crColorKey: COLORREF(0xffff_ffff),
+    })
 }
 
 /// Grid cells: one per item.
@@ -172,7 +367,8 @@ fn place(app: &mut App) {
 }
 
 pub fn render(app: &mut App) {
-    if !app.stack_view.open {
+    // Keeps drawing while the close fades out.
+    if !app.stack_view.open && app.stack_view.show.done() {
         return;
     }
     // Load icons for visible tiles that have none yet.
@@ -209,32 +405,36 @@ pub fn render(app: &mut App) {
     let Some(surf) = &v.surface else { return };
     let (g, t) = (&app.gfx, &app.theme);
     let fmt = |family, size, weight, align| g.text_format_aligned(family, size, weight, align).ok();
-    let name_fmt = fmt(&g.ui_font, 14.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER);
-    let caption = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
+    let f = fonts(g);
     let caption_lead = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
     let caption_end = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
-    let icon32 = fmt(&g.icon_font, 28.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
-    let icon12 = fmt(&g.icon_font, 10.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     let items = &app.stack.items;
+    let (drop_t, flash, settle, lift) = (v.drop_t.value(), v.flash.value(), v.settle.value(), v.lift.value());
 
     let _ = surf.draw(v.dpi, |p| {
         let (cx, cy) = (PAD, PAD);
         p.rect_shadow(cx, cy + 8.0, CARD_W, CARD_H, 8.0, 24.0, 0.55 * t.shadow);
         p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.surface_flyout);
-        if v.drop_hover {
+        if drop_t < 1.0 {
+            p.layer(1.0 - drop_t, 0.0, 0.0, |p| p.stroke_rounded(cx + 0.5, cy + 0.5, CARD_W - 1.0, CARD_H - 1.0, 8.0, 1.0, t.outline));
+        }
+        if drop_t > 0.0 {
             // The whole stack is the drop target. An opaque base keeps the
             // window behind from showing through the tint.
-            p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.surface);
-            p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.primary_subtle);
-            p.stroke_rounded_dashed(cx + 0.75, cy + 0.75, CARD_W - 1.5, CARD_H - 1.5, 8.0, 1.5, t.primary);
-        } else {
-            p.stroke_rounded(cx + 0.5, cy + 0.5, CARD_W - 1.0, CARD_H - 1.0, 8.0, 1.0, t.outline);
+            p.layer(drop_t, 0.0, 0.0, |p| {
+                p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.surface);
+                p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.primary_subtle);
+                p.stroke_rounded_dashed(cx + 0.75, cy + 0.75, CARD_W - 1.5, CARD_H - 1.5, 8.0, 1.5, t.primary);
+            });
+        }
+        if flash > 0.0 {
+            p.fill_rounded(cx, cy, CARD_W, CARD_H, 8.0, t.primary.alpha(0.22 * flash));
         }
         if items.is_empty() {
-            if let Some(f) = &name_fmt {
+            if let Some(f) = &f.name {
                 p.text("Nothing here yet", f, cx, cy + GRID_Y + GRID_H / 2.0 - 22.0, CARD_W, 20.0, t.text);
             }
-            if let Some(f) = &caption {
+            if let Some(f) = &f.caption {
                 p.text("Drag files, text or links onto the edge tab or here", f, cx, cy + GRID_Y + GRID_H / 2.0, CARD_W, 16.0, t.text_secondary);
             }
         }
@@ -251,7 +451,7 @@ pub fn render(app: &mut App) {
                 p.text(&head_label(app, i, &app.stack.names[i]), f, cx + hx + HEAD_PAD, cy + M + 4.0, hw - HEAD_PAD * 2.0, 20.0, color);
             }
         }
-        if let Some(f) = &icon12 {
+        if let Some(f) = &f.icon12 {
             p.text(GLYPH_ADD, f, cx + v.add_x, cy + M + 8.0, ADD_W, 14.0, t.text_secondary);
         }
         if let Some(f) = &caption_end {
@@ -265,43 +465,25 @@ pub fn render(app: &mut App) {
             let (tx, ty) = (cx + tx, cy + ty);
             let item = &items[i];
             let hovered = v.hover == Some(i);
-            p.rect_shadow(tx, ty + 1.0, TILE_W, TILE_H, 8.0, 2.0, 0.4 * t.shadow);
-            p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, if hovered { t.surface_hover } else { t.surface });
-            if v.sel.contains(item.id) {
-                p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, t.primary_subtle);
-            }
-            if v.focus == i {
-                p.stroke_rounded(tx + 0.5, ty + 0.5, TILE_W - 1.0, TILE_H - 1.0, 8.0, 1.0, t.primary);
-            }
-            match item.icon.as_ref().and_then(|i| i.as_ref()) {
-                Some(icon) => {
-                    let scale = (32.0 / icon.w.max(icon.h) as f32).min(1.0);
-                    let (iw, ih) = (icon.w as f32 * scale, icon.h as f32 * scale);
-                    p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
-                }
-                None => {
-                    let glyph = match &item.kind {
-                        Kind::File(_) => GLYPH_MISSING,
-                        Kind::Text(_) => GLYPH_TEXT,
-                        Kind::Link(_) => GLYPH_LINK,
-                    };
-                    if let Some(f) = &icon32 {
-                        p.text(glyph, f, tx, ty + 8.0, TILE_W, 36.0, t.text);
-                    }
-                }
-            }
-            if let Some(f) = &name_fmt {
-                p.text(&shelf::name(&item.kind), f, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
-            }
-            if let Some(f) = &caption {
-                p.text(shelf::kind_label(&item.kind), f, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
+            let look = Look { hovered, selected: v.sel.contains(item.id), focused: v.focus == i };
+            if v.lifted.contains(&item.id) {
+                // Lifted out by a drag: a faded tile over its empty slot.
+                p.layer(lift, 0.0, 0.0, |p| p.stroke_rounded_dashed(tx + 0.75, ty + 0.75, TILE_W - 1.5, TILE_H - 1.5, 8.0, 1.5, t.outline_control));
+                p.layer(1.0 - 0.65 * lift, 0.0, 0.0, |p| draw_tile(p, t, &f, item, tx, ty, look));
+            } else if v.fresh.contains(&item.id) {
+                p.layer(settle, 0.0, -SETTLE_DROP * (1.0 - settle), |p| {
+                    draw_tile(p, t, &f, item, tx, ty, look);
+                    p.fill_rounded(tx, ty, TILE_W, TILE_H, 8.0, t.primary.alpha(0.2 * flash));
+                });
+            } else {
+                draw_tile(p, t, &f, item, tx, ty, look);
             }
             if hovered {
                 let (rx, ry) = (tx + TILE_W - REMOVE - 4.0, ty + 4.0);
                 let bg = if v.hover_remove { t.surface } else { t.surface_flyout };
                 p.fill_circle(rx + REMOVE / 2.0, ry + REMOVE / 2.0, REMOVE / 2.0, bg);
                 p.stroke_circle(rx + REMOVE / 2.0, ry + REMOVE / 2.0, REMOVE / 2.0 - 0.5, 1.0, t.outline_control);
-                if let Some(f) = &icon12 {
+                if let Some(f) = &f.icon12 {
                     p.text(GLYPH_REMOVE, f, rx, ry, REMOVE, REMOVE, t.text);
                 }
             }
@@ -325,7 +507,14 @@ pub fn render(app: &mut App) {
             p.text(&hint, f, cx + M, cy + FOOTER_Y, CARD_W - M * 2.0, 16.0, t.text_secondary);
         }
     });
-    let _ = surf.present(v.hwnd, v.origin.0, v.origin.1, 1.0);
+    // Fades in while sliding out from the tab, and back on close.
+    let shown = v.show.value();
+    let toward_tab = match app.settings.edge {
+        Edge::Left => -1.0,
+        Edge::Right => 1.0,
+    };
+    let dx = ((1.0 - shown) * SLIDE * v.dpi as f32 / 96.0 * toward_tab).round() as i32;
+    let _ = surf.present(v.hwnd, v.origin.0 + dx, v.origin.1, shown);
 }
 
 pub fn open(app: &mut App, target: HWND) {
@@ -338,11 +527,13 @@ pub fn open(app: &mut App, target: HWND) {
     app.stack_view.scroll = 0;
     app.stack_view.hover = None;
     place(app);
+    app.stack_view.show.set(1.0, ms(app, OPEN_MS));
     render(app);
     unsafe {
         let _ = ShowWindow(app.stack_view.hwnd, SW_SHOW);
         let _ = SetForegroundWindow(app.stack_view.hwnd);
     }
+    animate(app);
     announce(app);
 }
 
@@ -608,11 +799,13 @@ pub fn open_for_drag(app: &mut App) {
     app.stack_view.dragging_in = true;
     reset_view(app);
     place(app);
+    app.stack_view.show.set(1.0, ms(app, OPEN_MS));
     render(app);
     unsafe {
         let _ = ShowWindow(app.stack_view.hwnd, SW_SHOWNOACTIVATE);
         let _ = SetWindowPos(app.stack_view.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
+    animate(app);
 }
 
 /// A drag moving over the stack: pointing at another stack's name switches
@@ -695,16 +888,21 @@ pub fn close(app: &mut App, restore: bool) {
     }
     // Clicking away keeps a name that was being typed.
     finish_rename(app, true);
-    app.stack_view.open = false;
-    app.stack_view.dragging_in = false;
-    app.stack_view.drop_hover = false;
-    app.stack_view.press = None;
+    let d = ms(app, CLOSE_MS);
+    let v = &mut app.stack_view;
+    v.open = false;
+    v.dragging_in = false;
+    v.drop_hover = false;
+    v.press = None;
+    v.drop_t.set(0.0, d);
+    // Fades out; the timer hides the window at the end.
+    v.show.set(0.0, d);
     unsafe {
-        let _ = ShowWindow(app.stack_view.hwnd, SW_HIDE);
-        if restore && !app.stack_view.target.is_invalid() {
-            let _ = SetForegroundWindow(app.stack_view.target);
+        if restore && !v.target.is_invalid() {
+            let _ = SetForegroundWindow(v.target);
         }
     }
+    animate(app);
 }
 
 /// Called after the stack changes from outside (a drop on the edge tab).
@@ -829,8 +1027,9 @@ fn move_focus(app: &mut App, delta: isize) {
 }
 
 /// Pressing on a selected tile drags the whole selection; pressing on any
-/// other tile selects it alone and drags just that one.
-fn start_drag(app: &mut App, index: usize) {
+/// other tile selects it alone and drags just that one. `grab` is where the
+/// press was, so the drag image stays under the same spot of the tile.
+fn start_drag(app: &mut App, index: usize, grab: POINT) {
     app.stack_view.press = None;
     let ids = ids(app);
     let Some(&id) = ids.get(index) else { return };
@@ -840,15 +1039,33 @@ fn start_drag(app: &mut App, index: usize) {
         render(app);
     }
     let chosen = app.stack_view.sel.ordered(&ids);
-    let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).map(|i| &i.kind).collect();
-    let Some(data) = dnd::data_object_many(&kinds) else { return };
+    let data = {
+        let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).map(|i| &i.kind).collect();
+        dnd::data_object_many(&kinds)
+    };
+    let Some(data) = data else { return };
+    let image = drag_image(app, index, chosen.len(), grab);
+    let d = ms(app, HOVER_MS);
+    let v = &mut app.stack_view;
+    v.lifted = chosen;
+    v.hover = None;
+    v.lift.set(1.0, d);
+    animate(app);
     // Messages keep flowing during the drag; hold no app state across it.
-    dnd::drag_out(&data);
+    dnd::drag_out(&data, image);
+    if let Some(app) = crate::app_mut() {
+        app.stack_view.lift.set(0.0, d);
+        animate(app);
+    }
 }
 
 pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     if msg == WM_GETOBJECT {
         return a11y::get_object(hwnd, wparam, lparam);
+    }
+    if msg == WM_TIMER && wparam.0 == ANIM_TIMER {
+        tick(app);
+        return Some(LRESULT(0));
     }
     if !app.stack_view.open {
         return None;
@@ -900,7 +1117,7 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
                 }
                 let (tx, ty) = unsafe { (GetSystemMetrics(SM_CXDRAG), GetSystemMetrics(SM_CYDRAG)) };
                 if (now.x - from.x).abs() > tx || (now.y - from.y).abs() > ty {
-                    start_drag(app, index);
+                    start_drag(app, index, from);
                     return Some(LRESULT(0));
                 }
             }

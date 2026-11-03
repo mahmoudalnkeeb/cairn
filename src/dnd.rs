@@ -1,17 +1,19 @@
 //! OLE drag and drop: the edge tab and the stack accept files, text and
 //! links; items can be dragged out into any app.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::path::PathBuf;
 
 use windows::Win32::Foundation::*;
+use windows::Win32::Graphics::Gdi::DeleteObject;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Memory::*;
 use windows::Win32::System::Ole::*;
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::Shell::Common;
+use windows::Win32::UI::WindowsAndMessaging::{IDC_ARROW, LoadCursorW, SetCursor};
 use windows::core::*;
 
 use crate::shelf::{Dropped, Kind};
@@ -25,8 +27,12 @@ pub enum Zone {
     Near,
 }
 
+fn registered(name: PCWSTR) -> u16 {
+    unsafe { windows::Win32::System::DataExchange::RegisterClipboardFormatW(name) as u16 }
+}
+
 fn url_format() -> u16 {
-    unsafe { windows::Win32::System::DataExchange::RegisterClipboardFormatW(w!("UniformResourceLocatorW")) as u16 }
+    registered(w!("UniformResourceLocatorW"))
 }
 
 fn format(cf: u16) -> FORMATETC {
@@ -38,7 +44,7 @@ fn has(data: &IDataObject, cf: u16) -> bool {
 }
 
 fn png_format() -> u16 {
-    unsafe { windows::Win32::System::DataExchange::RegisterClipboardFormatW(w!("PNG")) as u16 }
+    registered(w!("PNG"))
 }
 
 fn supported(data: &IDataObject) -> bool {
@@ -142,20 +148,81 @@ fn choose_effect(allowed: DROPEFFECT) -> DROPEFFECT {
     }
 }
 
+/// The label under the source's drag image ("Add to Stack"). Shown only by
+/// sources that allow it, such as Explorer and Cairn itself.
+fn describe(data: &IDataObject, kind: DROPIMAGETYPE, message: &str, insert: &str) {
+    let text = |s: &str| {
+        let mut out = [0u16; 260];
+        for (o, c) in out.iter_mut().zip(s.encode_utf16().take(259)) {
+            *o = c;
+        }
+        out
+    };
+    let d = DROPDESCRIPTION { r#type: kind, szMessage: text(message), szInsert: text(insert) };
+    let bytes = unsafe { std::slice::from_raw_parts(&d as *const _ as *const u8, size_of::<DROPDESCRIPTION>()) };
+    let _ = set_global(data, registered(w!("DropDescription")), bytes);
+}
+
+/// Whether the shell is drawing the drag image and its effect badge, in
+/// which case the source shows a plain arrow.
+fn showing_layered(data: &IDataObject) -> bool {
+    let cf = registered(w!("IsShowingLayered"));
+    has(data, cf) && read_bytes(data, cf).is_some_and(|b| b.iter().take(4).any(|&x| x != 0))
+}
+
 #[implement(IDropTarget)]
 struct DropTarget {
     zone: Zone,
+    hwnd: HWND,
     accept: Cell<bool>,
+    /// Keeps the source's drag image drawn over Cairn's windows.
+    helper: Option<IDropTargetHelper>,
+    data: RefCell<Option<IDataObject>>,
+    /// The stack name last put in the drop label.
+    label: RefCell<String>,
+}
+
+impl DropTarget {
+    /// Names the stack the drop will land in, when that changed.
+    fn update_label(&self) {
+        let name = crate::drop_label();
+        if *self.label.borrow() == name {
+            return;
+        }
+        if let Some(data) = &*self.data.borrow() {
+            describe(data, DROPIMAGE_COPY, "Add to %1", &name);
+        }
+        *self.label.borrow_mut() = name;
+    }
+
+    fn clear_label(&self) {
+        if let Some(data) = &*self.data.borrow()
+            && !self.label.borrow().is_empty()
+        {
+            describe(data, DROPIMAGE_INVALID, "", "");
+        }
+        self.label.borrow_mut().clear();
+    }
 }
 
 impl IDropTarget_Impl for DropTarget_Impl {
-    fn DragEnter(&self, data: Option<&IDataObject>, _: MODIFIERKEYS_FLAGS, _: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragEnter(&self, data: Option<&IDataObject>, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         let ok = data.is_some_and(supported);
         self.accept.set(ok);
+        *self.data.borrow_mut() = data.cloned();
+        self.label.borrow_mut().clear();
         unsafe {
             *effect = if ok { choose_effect(*effect) } else { DROPEFFECT_NONE };
         }
         crate::on_drag_hover(self.zone, ok);
+        if ok {
+            self.update_label();
+        }
+        if let (Some(h), Some(d)) = (&self.helper, data) {
+            unsafe {
+                let _ = h.DragEnter(self.hwnd, d, &POINT { x: pt.x, y: pt.y }, *effect);
+            }
+        }
         Ok(())
     }
 
@@ -165,20 +232,41 @@ impl IDropTarget_Impl for DropTarget_Impl {
         }
         if self.accept.get() {
             crate::on_drag_move(self.zone, POINT { x: pt.x, y: pt.y });
+            // Pointing at another stack's name switches to it.
+            self.update_label();
+        }
+        if let Some(h) = &self.helper {
+            unsafe {
+                let _ = h.DragOver(&POINT { x: pt.x, y: pt.y }, *effect);
+            }
         }
         Ok(())
     }
 
     fn DragLeave(&self) -> Result<()> {
+        self.clear_label();
+        if let Some(h) = &self.helper {
+            unsafe {
+                let _ = h.DragLeave();
+            }
+        }
+        *self.data.borrow_mut() = None;
         crate::on_drag_hover(self.zone, false);
         Ok(())
     }
 
-    fn Drop(&self, data: Option<&IDataObject>, _: MODIFIERKEYS_FLAGS, _: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn Drop(&self, data: Option<&IDataObject>, _: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+        self.clear_label();
+        *self.data.borrow_mut() = None;
         crate::on_drag_hover(self.zone, false);
         let dropped = data.and_then(read);
         unsafe {
             *effect = if dropped.is_some() { choose_effect(*effect) } else { DROPEFFECT_NONE };
+        }
+        if let (Some(h), Some(d)) = (&self.helper, data) {
+            unsafe {
+                let _ = h.Drop(d, &POINT { x: pt.x, y: pt.y }, *effect);
+            }
         }
         if let Some(d) = dropped {
             crate::on_drop(self.zone, d);
@@ -188,12 +276,23 @@ impl IDropTarget_Impl for DropTarget_Impl {
 }
 
 pub fn register(hwnd: HWND, zone: Zone) -> Result<()> {
-    let target: IDropTarget = DropTarget { zone, accept: Cell::new(false) }.into();
+    let helper = unsafe { CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok() };
+    let target: IDropTarget = DropTarget {
+        zone,
+        hwnd,
+        accept: Cell::new(false),
+        helper,
+        data: RefCell::new(None),
+        label: RefCell::new(String::new()),
+    }
+    .into();
     unsafe { RegisterDragDrop(hwnd, &target) }
 }
 
 #[implement(IDropSource)]
-struct DropSource;
+struct DropSource {
+    data: IDataObject,
+}
 
 impl IDropSource_Impl for DropSource_Impl {
     fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
@@ -207,20 +306,35 @@ impl IDropSource_Impl for DropSource_Impl {
     }
 
     fn GiveFeedback(&self, _: DROPEFFECT) -> HRESULT {
+        // The shell draws the effect beside the drag image; a "+" on the
+        // cursor as well would show it twice.
+        if showing_layered(&self.data) {
+            unsafe {
+                if let Ok(arrow) = LoadCursorW(None, IDC_ARROW) {
+                    SetCursor(arrow);
+                }
+            }
+            return S_OK;
+        }
         DRAGDROP_S_USEDEFAULTCURSORS
     }
 }
 
 fn set_utf16(obj: &IDataObject, cf: u16, text: &str) -> Option<()> {
     let units: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr() as *const u8, units.len() * 2) };
+    set_global(obj, cf, bytes)
+}
+
+fn set_global(obj: &IDataObject, cf: u16, bytes: &[u8]) -> Option<()> {
     unsafe {
-        let global = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2).ok()?;
-        let ptr = GlobalLock(global) as *mut u16;
+        let global = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).ok()?;
+        let ptr = GlobalLock(global) as *mut u8;
         if ptr.is_null() {
             let _ = GlobalFree(global);
             return None;
         }
-        std::ptr::copy_nonoverlapping(units.as_ptr(), ptr, units.len());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
         let _ = GlobalUnlock(global);
         let medium = STGMEDIUM {
             tymed: TYMED_HGLOBAL.0 as u32,
@@ -297,10 +411,23 @@ pub fn data_object_many(kinds: &[&Kind]) -> Option<IDataObject> {
     }
 }
 
-/// Runs the modal drag loop. Callers must not hold app state across it,
-/// since window messages keep flowing while it runs.
-pub fn drag_out(data: &IDataObject) -> DROPEFFECT {
-    let source: IDropSource = DropSource.into();
+/// Runs the modal drag loop with `image` under the cursor. Callers must not
+/// hold app state across it, since window messages keep flowing while it
+/// runs. The shell owns the image's bitmap once it takes it.
+pub fn drag_out(data: &IDataObject, image: Option<SHDRAGIMAGE>) -> DROPEFFECT {
+    if let Some(img) = image {
+        let helper: Option<IDragSourceHelper2> = unsafe { CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok() };
+        let taken = helper.is_some_and(|h| unsafe {
+            let _ = h.SetFlags(DSH_ALLOWDROPDESCRIPTIONTEXT.0 as u32);
+            h.InitializeFromBitmap(&img, data).is_ok()
+        });
+        if !taken {
+            unsafe {
+                let _ = DeleteObject(img.hbmpDragImage);
+            }
+        }
+    }
+    let source: IDropSource = DropSource { data: data.clone() }.into();
     let mut effect = DROPEFFECT_NONE;
     unsafe {
         let _ = DoDragDrop(data, &source, DROPEFFECT_COPY | DROPEFFECT_LINK, &mut effect);

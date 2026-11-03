@@ -234,8 +234,7 @@ pub fn on_drag_hover(zone: dnd::Zone, over: bool) {
             }
         }
         dnd::Zone::Stack => {
-            app.stack_view.drop_hover = over;
-            stackview::render(app);
+            stackview::set_drop_hover(app, over);
             if over {
                 unsafe {
                     let _ = KillTimer(app.host, DRAG_CLOSE_TIMER);
@@ -254,6 +253,11 @@ pub fn on_drag_move(zone: dnd::Zone, pt: POINT) {
     if zone == dnd::Zone::Stack && app.stack_view.open {
         stackview::drag_over(app, pt);
     }
+}
+
+/// The stack a drop would land in, for the label under the drag image.
+pub fn drop_label() -> String {
+    app().map(|a| a.stack.names[a.stack.current].clone()).unwrap_or_default()
 }
 
 /// A stack opened by a drag closes by itself once the drag is gone.
@@ -285,7 +289,7 @@ pub fn on_drop(zone: dnd::Zone, dropped: shelf::Dropped) {
         dnd::Zone::Stack => {}
     }
     if app.stack_view.open {
-        stackview::refresh(app);
+        stackview::added(app, added);
     }
     // Leave the new item in view for a moment before closing.
     close_drag_stack_soon(app, 900);
@@ -389,7 +393,7 @@ fn add_clipboard(app: &mut App) {
         copy_from_drives(app, added);
     }
     if app.stack_view.open {
-        stackview::refresh(app);
+        stackview::added(app, added);
     } else {
         let i = edgetab::under_cursor(app);
         edgetab::dropped(app, i, added);

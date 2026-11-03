@@ -2,6 +2,21 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-03
+
+### Added
+
+- Dragging items out of the stack shows them under the cursor: the tile you picked up, the rest of the selection stacked behind it, and a count when there are several.
+- While you drag, the items you picked up fade in the stack, leaving their outline behind. They come back when the drag ends.
+- A drag over the edge tab, the stack or the drop zone keeps showing the dragged picture, with "Add to" and the stack's name under it. Pointing at another stack's name updates the label.
+
+### Changed
+
+- The stack fades in and slides out from the edge tab when it opens, and fades away when it closes.
+- The stack's drop highlight fades in and out instead of switching on and off.
+- After a drop, the edge tab and the stack flash lichen once, and new tiles settle into place from just above.
+- With "Show animations in Windows" off, all of this happens without transitions.
+
 ## [0.4.2] - 2026-11-03
 
 ### Changed
@@ -77,6 +92,7 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.5.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.5.0
 [0.4.2]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.2
 [0.4.1]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.1
 [0.4.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.0

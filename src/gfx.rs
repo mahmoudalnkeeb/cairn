@@ -1,8 +1,11 @@
 //! Direct2D/DirectWrite rendering into per-pixel-alpha layered windows,
 //! plus the brand color tokens.
 
+use std::cell::Cell;
 use std::ffi::c_void;
+use std::time::Instant;
 
+use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
@@ -260,7 +263,8 @@ impl Surface {
             self.target.SetDpi(dpi as f32, dpi as f32);
             self.target.BeginDraw();
             self.target.Clear(Some(&Color(0.0, 0.0, 0.0, 0.0).d2d()));
-            f(&Painter { rt: &self.target });
+            self.target.SetTransform(&Matrix3x2::identity());
+            f(&Painter { rt: &self.target, opacity: Cell::new(1.0), offset: Cell::new((0.0, 0.0)) });
             self.target.EndDraw(None, None)
         }
     }
@@ -290,6 +294,18 @@ impl Surface {
         }
     }
 
+    /// Hands the pixels over as a bitmap the caller owns (for a drag image).
+    pub fn into_bitmap(self) -> HBITMAP {
+        let me = std::mem::ManuallyDrop::new(self);
+        unsafe {
+            SelectObject(me.dc, me.old);
+            let _ = DeleteDC(me.dc);
+            // Releases the render target; the bitmap is not touched.
+            drop(std::ptr::read(&me.target));
+        }
+        me.bitmap
+    }
+
     /// Builds an icon (for the tray) from the current pixels.
     pub fn to_icon(&self) -> Result<HICON> {
         unsafe {
@@ -314,6 +330,9 @@ impl Drop for Surface {
 
 pub struct Painter<'a> {
     rt: &'a ID2D1RenderTarget,
+    /// Multiplies every color and image drawn, for fades.
+    opacity: Cell<f32>,
+    offset: Cell<(f32, f32)>,
 }
 
 fn ellipse(x: f32, y: f32, r: f32) -> D2D1_ELLIPSE {
@@ -322,7 +341,19 @@ fn ellipse(x: f32, y: f32, r: f32) -> D2D1_ELLIPSE {
 
 impl Painter<'_> {
     fn brush(&self, c: Color) -> Option<ID2D1SolidColorBrush> {
-        unsafe { self.rt.CreateSolidColorBrush(&c.d2d(), None).ok() }
+        unsafe { self.rt.CreateSolidColorBrush(&c.alpha(self.opacity.get()).d2d(), None).ok() }
+    }
+
+    /// Draws `f` faded to `opacity` and shifted by dx, dy DIPs.
+    pub fn layer(&self, opacity: f32, dx: f32, dy: f32, f: impl FnOnce(&Self)) {
+        let (o, (ox, oy)) = (self.opacity.get(), self.offset.get());
+        self.opacity.set(o * opacity);
+        self.offset.set((ox + dx, oy + dy));
+        unsafe { self.rt.SetTransform(&Matrix3x2::translation(ox + dx, oy + dy)) };
+        f(self);
+        self.opacity.set(o);
+        self.offset.set((ox, oy));
+        unsafe { self.rt.SetTransform(&Matrix3x2::translation(ox, oy)) };
     }
 
     pub fn fill_circle(&self, x: f32, y: f32, r: f32, c: Color) {
@@ -433,7 +464,7 @@ impl Painter<'_> {
             let size = D2D_SIZE_U { width: w, height: h };
             let Ok(bitmap) = self.rt.CreateBitmap(size, Some(bgra.as_ptr() as *const _), w * 4, &props) else { return };
             let dest = D2D_RECT_F { left: x, top: y, right: x + dw, bottom: y + dh };
-            self.rt.DrawBitmap(&bitmap, Some(&dest), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+            self.rt.DrawBitmap(&bitmap, Some(&dest), self.opacity.get(), D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
         }
     }
 
@@ -452,6 +483,49 @@ impl Painter<'_> {
                 )
             }
         }
+    }
+}
+
+/// A value that eases to its target on the brand curve, `cubic-bezier(0,0,0,1)`.
+#[derive(Clone, Copy)]
+pub struct Tween {
+    from: f32,
+    to: f32,
+    start: Instant,
+    ms: f32,
+}
+
+impl Tween {
+    pub fn new(v: f32) -> Tween {
+        Tween { from: v, to: v, start: Instant::now(), ms: 0.0 }
+    }
+
+    /// Heads for `to` over `ms` from wherever it is now; 0 ms jumps.
+    pub fn set(&mut self, to: f32, ms: f32) {
+        if to != self.to {
+            *self = Tween { from: self.value(), to, start: Instant::now(), ms };
+        }
+    }
+
+    /// Starts over from `from`, for one-off effects.
+    pub fn run(&mut self, from: f32, to: f32, ms: f32) {
+        *self = Tween { from, to, start: Instant::now(), ms };
+    }
+
+    fn k(&self) -> f32 {
+        if self.ms <= 0.0 { 1.0 } else { (self.start.elapsed().as_secs_f32() * 1000.0 / self.ms).min(1.0) }
+    }
+
+    pub fn value(&self) -> f32 {
+        self.from + (self.to - self.from) * bezier(0.0, 0.0, 0.0, 1.0, self.k())
+    }
+
+    pub fn target(&self) -> f32 {
+        self.to
+    }
+
+    pub fn done(&self) -> bool {
+        self.k() >= 1.0
     }
 }
 
