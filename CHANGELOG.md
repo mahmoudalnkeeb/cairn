@@ -2,7 +2,7 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-11-03
 
 ### Added
 
@@ -125,6 +125,7 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.6.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.6.0
 [0.5.1]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.5.0
 [0.4.2]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.2
