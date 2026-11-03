@@ -191,17 +191,30 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
 .tour-steps h3 { font-size: 1.25rem; transition: color .2s; }
 @media (max-width: 860px) { .tour { grid-template-columns: 1fr; } }
 
-/* Step pictures: scenes drawn at 560 × 315 with the app's own sizes (tab
-   pill 4 × 96 at 3 px, drop zone 88 × 160 at 6 px, tiles 96 × 88, stack 8 px
-   from the tab) and scaled to fit. One loop is 4.8 s. */
+/* Step pictures: a desktop drawn at 880 × 495 and scaled to fit. Your apps
+   fill the screen; Cairn's parts keep their real sizes beside them (tab pill
+   4 × 96 at 3 px, drop zone 88 × 160 at 6 px, tiles 96 × 88, stack 8 px from
+   the tab). One loop is 4.8 s. */
 .pic { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--wallpaper); border: 1px solid var(--outline); border-radius: 12px; }
-.scene { position: absolute; left: 0; top: 0; width: 560px; height: 315px; transform: scale(var(--s, 1)); transform-origin: 0 0; font-family: var(--app); color: var(--text); }
+.scene { position: absolute; left: 0; top: 0; width: 880px; height: 495px; transform: scale(var(--s, 1)); transform-origin: 0 0; font-family: var(--app); color: var(--text); }
+
+/* The user's app windows. */
+.s-app { position: absolute; display: grid; grid-template-rows: auto 1fr; background: var(--surface); border: 1px solid var(--outline); border-radius: 8px; box-shadow: 0 16px 40px rgb(0 0 0 / .3); overflow: hidden; }
+.s-app-bar { height: 34px; padding: 0 14px; font-size: 13px; font-weight: 600; line-height: 34px; background: var(--surface-hover); border-bottom: 1px solid var(--line); }
+.s-files { position: relative; display: grid; grid-template-columns: repeat(auto-fill, 96px); gap: 14px; align-content: start; padding: 18px; border: 1.5px dashed transparent; border-radius: 0 0 8px 8px; }
+.s-file { display: grid; justify-items: center; gap: 6px; height: 92px; padding-top: 6px; font-size: 12px; }
+.s-file span { display: grid; place-items: center; width: 64px; height: 50px; color: var(--muted); background: var(--surface-hover); border-radius: 6px; }
+.s-file svg { width: 26px; height: 26px; }
+.s-mail { display: grid; grid-template-columns: 180px 1fr; }
+.s-mail aside { display: grid; align-content: start; gap: 10px; padding: 18px 14px; border-right: 1px solid var(--line); }
+.s-mail article { display: grid; align-content: start; gap: 12px; padding: 22px; }
+.s-mail i { display: block; height: 9px; background: var(--line); border-radius: 5px; }
 
 /* The idle edge tab. */
-.s-pill { position: absolute; right: 3px; top: 109px; width: 4px; height: 96px; background: color-mix(in srgb, var(--outline-control) 40%, transparent); border-radius: 2px; }
+.s-pill { position: absolute; right: 3px; top: 199px; width: 4px; height: 96px; background: color-mix(in srgb, var(--outline-control) 40%, transparent); border-radius: 2px; }
 
 /* Step 1: the pill grows into the drop zone, takes the drop, says so, folds back. */
-.s-zone { position: absolute; right: 6px; top: 77px; width: 88px; height: 160px; background: color-mix(in srgb, var(--primary) 15%, var(--flyout)); border: 1.5px dashed var(--primary); border-radius: 8px; box-shadow: 0 6px 12px rgb(0 0 0 / .25); transform-origin: 100% 50%; }
+.s-zone { position: absolute; right: 6px; top: 167px; width: 88px; height: 160px; background: color-mix(in srgb, var(--primary) 15%, var(--flyout)); border: 1.5px dashed var(--primary); border-radius: 8px; box-shadow: 0 6px 12px rgb(0 0 0 / .25); transform-origin: 100% 50%; }
 .s-zone svg { position: absolute; left: 28px; top: 44px; width: 32px; height: 32px; }
 .s-cap { position: absolute; left: 0; right: 0; top: 92px; font-size: 12px; text-align: center; }
 .s-here { color: var(--muted); }
@@ -220,21 +233,21 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
 @keyframes s-added { 0% { opacity: 0; } 56% { opacity: 1; } 81% { opacity: 0; } }
 
 /* A Windows drag image: the file, its name and the "+ Copy" hint. */
-.s-ghost { position: absolute; left: 0; top: 0; display: grid; justify-items: center; gap: 2px; width: 96px; padding: 8px 4px; font-size: 12px; opacity: .85; }
+.s-ghost { position: absolute; left: 0; top: 0; z-index: 2; display: grid; justify-items: center; gap: 2px; width: 96px; padding: 8px 4px; font-size: 12px; opacity: .85; }
 .s-ghost svg { width: 32px; height: 32px; }
 .s-ghost b { font-weight: 600; }
 .s-copy { position: absolute; left: 46px; top: 50px; padding: 1px 6px; color: var(--text); font-size: 11px; white-space: nowrap; background: var(--surface); border: 1px solid var(--outline); border-radius: 3px; box-shadow: 0 2px 6px rgb(0 0 0 / .3); }
 .s-drop .s-ghost { animation: s-carry 4.8s var(--ease) infinite; }
 @keyframes s-carry {
-  0% { opacity: 0; transform: translate(40px, 150px); }
-  6% { opacity: .85; }
-  30% { transform: translate(400px, 112px); }
-  52% { opacity: .85; transform: translate(450px, 104px); }
-  56%, 100% { opacity: 0; transform: translate(450px, 104px) scale(.8); }
+  0% { opacity: 0; transform: translate(152px, 80px); }
+  6% { opacity: .85; transform: translate(156px, 84px); }
+  30% { transform: translate(700px, 190px); }
+  52% { opacity: .85; transform: translate(770px, 200px); }
+  56%, 100% { opacity: 0; transform: translate(770px, 200px) scale(.8); }
 }
 
 /* Steps 2 and 3: the stack, opened beside the tab. */
-.s-flyout { position: absolute; right: 18px; top: 66px; width: 432px; padding: 12px; background: var(--flyout); border: 1px solid var(--outline); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
+.s-flyout { position: absolute; right: 18px; top: 155px; width: 432px; padding: 12px; background: var(--flyout); border: 1px solid var(--outline); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / .35); }
 .s-flyout .tile { height: 88px; padding: 8px 6px 6px; }
 .s-stack .s-flyout { animation: s-open 4.8s var(--ease) infinite; }
 .s-stack .tile.new { animation: s-settle 4.8s var(--ease) infinite; }
@@ -244,28 +257,20 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
   34%, 100% { opacity: 1; transform: none; }
 }
 
-/* Step 3, drawn wider (700 × 394) so the folder window sits fully beside the stack. */
-.s-out { width: 700px; height: 394px; }
-.s-out .s-pill { top: 149px; }
-.s-out .s-flyout { top: 105px; }
-.s-win { position: absolute; left: 22px; top: 92px; width: 208px; height: 214px; background: var(--surface); border: 1px solid var(--outline); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / .3); overflow: hidden; }
-.s-win-bar { height: 30px; padding: 0 12px; font-size: 12px; font-weight: 600; line-height: 30px; background: var(--surface-hover); border-bottom: 1px solid var(--line); }
-.s-win-body { position: absolute; inset: 31px 0 0; display: grid; grid-template-columns: repeat(3, 44px); gap: 10px 14px; align-content: start; padding: 14px; border: 1.5px dashed transparent; border-radius: 0 0 8px 8px; }
-.s-win-body i { display: block; height: 40px; background: var(--line); border-radius: 4px; }
-.s-win-body i.got { display: grid; place-items: center; background: transparent; }
-.s-win-body i.got svg { width: 28px; height: 28px; }
-.s-out .s-win-body { animation: s-receive 4.8s step-end infinite; }
-.s-out .s-win-body i.got { animation: s-arrive 4.8s step-end infinite; }
+/* Step 3: the photo leaves the stack and lands among the documents. */
+.s-files .got { opacity: 0; }
+.s-out .s-files { animation: s-receive 4.8s step-end infinite; }
+.s-out .s-files .got { animation: s-arrive 4.8s step-end infinite; }
 .s-out .s-ghost { animation: s-deliver 4.8s var(--ease) infinite; }
 @keyframes s-deliver {
-  0%, 8% { opacity: 0; transform: translate(262px, 151px); }
-  14% { opacity: .85; transform: translate(256px, 156px); }
-  50% { opacity: .85; transform: translate(70px, 170px); }
-  56%, 100% { opacity: 0; transform: translate(70px, 170px) scale(.8); }
+  0%, 8% { opacity: 0; transform: translate(442px, 200px); }
+  14% { opacity: .85; transform: translate(436px, 204px); }
+  50% { opacity: .85; transform: translate(152px, 206px); }
+  56%, 100% { opacity: 0; transform: translate(152px, 206px) scale(.8); }
 }
 @keyframes s-receive {
   0% { background: transparent; border-color: transparent; }
-  36% { background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: var(--primary); }
+  36% { background: color-mix(in srgb, var(--primary) 10%, transparent); border-color: var(--primary); }
   56% { background: transparent; border-color: transparent; }
 }
 @keyframes s-arrive { 0% { opacity: 0; } 56% { opacity: 1; } }
@@ -329,5 +334,5 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
   * { transition: none !important; animation: none !important; }
   /* Hold each scene at its key moment instead. */
   .s-drop .s-pill, .s-ghost, .s-drop .s-here { opacity: 0 !important; }
-  .s-drop .s-added, .s-out .s-win-body i.got { opacity: 1 !important; }
+  .s-drop .s-added, .s-out .s-files .got { opacity: 1 !important; }
 }
