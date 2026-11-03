@@ -1,0 +1,42 @@
+name: Build
+
+# Release builds come from here: MSVC embeds the version details and manifest
+# (build.rs), which the local GNU toolchain can't without windres.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+    paths-ignore: [site/**, .github/workflows/pages.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/cairn.exe dist/Cairn.exe
+          (Get-Item dist/Cairn.exe).VersionInfo | Format-List ProductName, FileDescription, FileVersion, CompanyName
+          (Get-FileHash dist/Cairn.exe).Hash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cairn-windows-x64
+          path: dist/

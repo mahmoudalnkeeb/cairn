@@ -2,6 +2,16 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-11-03
+
+### Fixed
+
+- Fewer antivirus false alarms. A few scanners flagged 0.5.0 by guesswork, with no named threat. Cairn.exe now names itself in its file details, states that it needs no admin rights, and is built by GitHub Actions with Microsoft's toolchain.
+
+### Changed
+
+- "Save as zip" writes the zip itself instead of running Windows' tar.exe in the background. Folders keep everything inside them, and files keep their dates.
+
 ## [0.5.0] - 2026-11-03
 
 ### Added
@@ -92,6 +102,7 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.5.1]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.5.0
 [0.4.2]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.2
 [0.4.1]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.1
