@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400&family=JetBrains+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=0.4.1">
+<link rel="stylesheet" href="style.css?v=0.4.1-2">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -71,9 +71,8 @@
   <section class="demo" aria-label="What Cairn looks like">
     <div class="wrap">
       <figure>
-        <div class="monitor" aria-hidden="true">
-          <div class="bezel">
-            <div class="display">
+        <div class="shot" aria-hidden="true">
+          <div class="display">
               <!-- Drawn at 1120 × 630 and scaled to fit, so it keeps a screen's proportions. -->
               <div class="desk">
                 <div class="app">
@@ -104,9 +103,7 @@
                   <span class="tray"><svg><use href="#i-mark"/></svg><span>4:12 PM<br>11/3/2026</span></span>
                 </div>
               </div>
-            </div>
           </div>
-          <div class="stand"><span class="neck"></span><span class="base"></span></div>
         </div>
         <figcaption>Pick what you need from your stack and drag it straight into an email.</figcaption>
       </figure>
@@ -252,7 +249,7 @@
   </div>
 </footer>
 <script>
-  // Scale the 1120 × 630 desktop drawing to the monitor's width.
+  // Scale the 1120 × 630 desktop drawing to the frame's width.
   (() => {
     const desk = document.querySelector('.desk');
     if (!desk) return;
