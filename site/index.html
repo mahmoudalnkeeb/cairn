@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400&family=JetBrains+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=0.4.1-5">
+<link rel="stylesheet" href="style.css?v=0.4.1-8">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -120,23 +120,40 @@
       <div class="tour">
         <div class="tour-stage" aria-hidden="true">
           <div class="pic on">
-            <div class="pic-drop">
-              <div class="chip"><svg><use href="#i-image"/></svg>photo.jpg</div>
-              <div class="zone"><svg><use href="#i-mark"/></svg><span>Drop here</span></div>
+            <div class="scene s-drop">
+              <div class="s-pill"></div>
+              <div class="s-zone"><svg><use href="#i-mark"/></svg><span class="s-cap s-here">Drop here</span><span class="s-cap s-added">Added 1</span></div>
+              <div class="s-ghost"><svg><use href="#i-image"/></svg><b>photo.jpg</b><span class="s-copy">+ Copy</span></div>
             </div>
           </div>
           <div class="pic">
-            <div class="pic-stack">
-              <div class="mini"><svg><use href="#i-image"/></svg></div>
-              <div class="mini"><svg><use href="#i-file"/></svg></div>
-              <div class="mini"><svg><use href="#i-link"/></svg></div>
-              <div class="mini"><svg><use href="#i-text"/></svg></div>
+            <div class="scene s-stack">
+              <div class="s-flyout">
+                <div class="flyout-head"><span class="pill on">Stack</span><span class="pill">Work</span><span class="add">+</span><span class="count">3 items</span></div>
+                <div class="tiles">
+                  <div class="tile new"><svg><use href="#i-image"/></svg><b>photo.jpg</b><i>File</i></div>
+                  <div class="tile"><svg><use href="#i-file"/></svg><b>Q3 report.pdf</b><i>File</i></div>
+                  <div class="tile"><svg><use href="#i-link"/></svg><b>example.com/map</b><i>Link</i></div>
+                </div>
+                <div class="flyout-foot">Drag out to use &nbsp;&nbsp; Enter open &nbsp;&nbsp; Del remove &nbsp;&nbsp; Right-click for more</div>
+              </div>
+              <div class="s-pill"></div>
             </div>
           </div>
           <div class="pic">
-            <div class="pic-out">
-              <div class="win"><span></span><span></span><span></span></div>
-              <div class="chip out"><svg><use href="#i-image"/></svg>photo.jpg</div>
+            <div class="scene s-out">
+              <div class="s-win"><div class="s-win-bar">Documents</div><div class="s-win-body"><i></i><i></i><i></i><i></i><i class="got"><svg><use href="#i-image"/></svg></i></div></div>
+              <div class="s-flyout">
+                <div class="flyout-head"><span class="pill on">Stack</span><span class="pill">Work</span><span class="add">+</span><span class="count">3 items</span></div>
+                <div class="tiles">
+                  <div class="tile sel focus"><svg><use href="#i-image"/></svg><b>photo.jpg</b><i>File</i></div>
+                  <div class="tile"><svg><use href="#i-file"/></svg><b>Q3 report.pdf</b><i>File</i></div>
+                  <div class="tile"><svg><use href="#i-link"/></svg><b>example.com/map</b><i>Link</i></div>
+                </div>
+                <div class="flyout-foot">Drag out to use &nbsp;&nbsp; Enter open &nbsp;&nbsp; Del remove &nbsp;&nbsp; Right-click for more</div>
+              </div>
+              <div class="s-pill"></div>
+              <div class="s-ghost"><svg><use href="#i-image"/></svg><b>photo.jpg</b><span class="s-copy">+ Copy</span></div>
             </div>
           </div>
         </div>
@@ -291,13 +308,13 @@
     if (!matchMedia('(prefers-reduced-motion: reduce)').matches) timer = setInterval(() => show((at + 1) % steps.length), 4800);
   })();
 
-  // Scale the 1120 × 630 desktop drawing to the frame's width.
+  // Scale fixed-size drawings (the desktop and the step scenes) to their frames.
   (() => {
-    const desk = document.querySelector('.desk');
-    if (!desk) return;
-    const fit = () => desk.style.setProperty('--s', desk.parentElement.clientWidth / 1120);
-    new ResizeObserver(fit).observe(desk.parentElement);
-    fit();
+    for (const el of document.querySelectorAll('.desk, .scene')) {
+      const fit = () => { if (el.offsetWidth) el.style.setProperty('--s', el.parentElement.clientWidth / el.offsetWidth); };
+      new ResizeObserver(fit).observe(el.parentElement);
+      fit();
+    }
   })();
 </script>
 </body>
