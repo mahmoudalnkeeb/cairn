@@ -29,7 +29,8 @@
 - Open a file or link with a double-click. A text item pastes into the app you came from.
 - Your stack stays until you remove it, including after a restart.
 - A file moved to another folder on the same drive is found again when you open it. If Cairn can't find it, the tile says Missing: right-click it and choose "Find file…".
-- Cairn keeps references to your files and never moves them. It keeps its own copy only of images that had no file, like a screenshot, and, if you turn it on, of files from USB sticks and network drives.
+- Cairn keeps references to your files and never moves them. It keeps its own copy only of things that had no file of their own, like a screenshot or an email attachment, and, if you turn it on, of files from USB sticks and network drives.
+- Drop email attachments, or files and folders straight out of a zip. Cairn saves its own copy, since they have no place on disk yet.
 - Shake the mouse while dragging to get a drop zone right next to the cursor (turn it on in the tray menu).
 - An edge tab on every monitor, or only the ones you pick. Drag the tab up or down to where you want it.
 - The edge tab hides on the monitor where a game, fullscreen video or presentation is in front.
@@ -72,7 +73,7 @@ Shake to show is off by default. To notice a shake, Cairn watches mouse movement
 
 ## Your data
 
-Everything stays on your PC. The stack is saved to `%APPDATA%\Cairn`, encrypted for your Windows account. Cairn's own copies of images and drive files are kept in `%APPDATA%\Cairn\files` and deleted once no stack holds them. Cairn makes no network requests and has no account or telemetry.
+Everything stays on your PC. The stack is saved to `%APPDATA%\Cairn`, encrypted for your Windows account. Cairn's own copies of images, attachments, files from inside zips and drive files are kept in `%APPDATA%\Cairn\files` and deleted once no stack holds them. Cairn makes no network requests and has no account or telemetry.
 
 To remove Cairn, quit it from the tray menu, delete `Cairn.exe`, and delete the `%APPDATA%\Cairn` folder.
 

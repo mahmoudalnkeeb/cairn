@@ -107,6 +107,14 @@ fn free_name(dir: &Path, stem: &str, ext: &str) -> PathBuf {
         .unwrap()
 }
 
+/// A free path in `dir` for a file or folder name, keeping its extension.
+pub fn free_path(dir: &Path, name: &str) -> PathBuf {
+    let p = Path::new(name);
+    let stem = p.file_stem().map_or(name.into(), |s| s.to_string_lossy());
+    let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    free_name(dir, &stem, &ext)
+}
+
 fn stamp() -> String {
     let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     format!("{:04}-{:02}-{:02} {:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
@@ -338,7 +346,14 @@ fn prune<'a>(dir: &Path, items: impl Iterator<Item = &'a ShelfItem>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let p = e.path();
-        if p.is_file() && !used.contains(&p.as_path()) {
+        if used.contains(&p.as_path()) {
+            continue;
+        }
+        // Folders come from dropped folders that had no path, like one
+        // dragged out of a zip.
+        if p.is_dir() {
+            let _ = fs::remove_dir_all(p);
+        } else {
             let _ = fs::remove_file(p);
         }
     }
@@ -596,9 +611,11 @@ mod tests {
         let b = save_image(&dir, b"two", "png", "2026-11-03 120000").unwrap();
         assert_eq!(a.file_name().unwrap(), "Image 2026-11-03 120000.png");
         assert_eq!(b.file_name().unwrap(), "Image 2026-11-03 120000 (2).png");
+        assert_eq!(free_path(&dir, "Image 2026-11-03 120000.png").file_name().unwrap(), "Image 2026-11-03 120000 (3).png");
+        fs::create_dir_all(dir.join("unzipped").join("inner")).unwrap();
         let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None, track: None }];
         prune(&dir, kept.iter());
-        assert!(a.exists() && !b.exists());
+        assert!(a.exists() && !b.exists() && !dir.join("unzipped").exists());
     }
 
     #[test]
