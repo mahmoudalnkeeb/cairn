@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400&family=JetBrains+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=0.4.1-2">
+<link rel="stylesheet" href="style.css?v=0.4.1-5">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -34,6 +34,7 @@
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
   <symbol id="i-stack" viewBox="0 0 24 24"><rect x="3.75" y="4.75" width="16.5" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.75" y="14.25" width="16.5" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
   <symbol id="i-feather" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M6.5 17.5C6 11.5 11.5 6 19 5c-1 7-6.5 13-12.5 12.5Z"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M4.5 19.5 9 15"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m-5-5 5 5 5-5M5 20h14"/></symbol>
   <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3.75" y="5.75" width="16.5" height="12.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="m4.5 7 7.5 6 7.5-6"/></symbol>
   <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M3.75 12h16.5M12 3.75c2.5 2.6 2.5 13.9 0 16.5M12 3.75c-2.5 2.6-2.5 13.9 0 16.5"/></symbol>
   <symbol id="i-tabs" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M3.75 8.25h16.5v11.5H3.75zM3.75 8.25V5.5a1 1 0 0 1 1-1h5l1.5 3.75M11.25 8.25 12.5 4.5h4.5l1.25 3.75"/></symbol>
@@ -62,7 +63,7 @@
       <h1 id="hero-title">Set it down.<br><em>Pick it up anywhere.</em></h1>
       <p class="lede">Cairn gives you a place to put things at the edge of your screen. Drop in files, text or links while you work, then drag them into any app when you need them.</p>
       <div class="actions">
-        <a class="btn primary" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener"><svg aria-hidden="true"><use href="#i-windows"/></svg>Download for Windows</a>
+        <a class="btn primary chipped" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener">Download for Windows<span class="chip-ico"><svg aria-hidden="true"><use href="#i-down"/></svg></span></a>
         <a class="btn ghost" href="#how">See how it works</a>
       </div>
     </div>
@@ -112,22 +113,19 @@
 
   <section id="how" aria-labelledby="how-title">
     <div class="wrap">
-      <p class="kicker">How it works</p>
-      <h2 id="how-title">Three moves, no setup</h2>
-      <ol class="steps">
-        <li>
-          <div class="pic" aria-hidden="true">
+      <div class="head center">
+        <p class="badge">How it works</p>
+        <h2 id="how-title">Three moves, no setup</h2>
+      </div>
+      <div class="tour">
+        <div class="tour-stage" aria-hidden="true">
+          <div class="pic on">
             <div class="pic-drop">
               <div class="chip"><svg><use href="#i-image"/></svg>photo.jpg</div>
               <div class="zone"><svg><use href="#i-mark"/></svg><span>Drop here</span></div>
             </div>
           </div>
-          <span class="num">01</span>
-          <h3>Drag it to the edge</h3>
-          <p>Drag a file, some text or a link to the side of your screen. A drop zone appears. Let go, and it's kept.</p>
-        </li>
-        <li>
-          <div class="pic" aria-hidden="true">
+          <div class="pic">
             <div class="pic-stack">
               <div class="mini"><svg><use href="#i-image"/></svg></div>
               <div class="mini"><svg><use href="#i-file"/></svg></div>
@@ -135,29 +133,40 @@
               <div class="mini"><svg><use href="#i-text"/></svg></div>
             </div>
           </div>
-          <span class="num">02</span>
-          <h3>Carry on</h3>
-          <p>Switch apps, close windows, even restart your PC. Everything waits in your stack until you remove it.</p>
-        </li>
-        <li>
-          <div class="pic" aria-hidden="true">
+          <div class="pic">
             <div class="pic-out">
               <div class="win"><span></span><span></span><span></span></div>
               <div class="chip out"><svg><use href="#i-image"/></svg>photo.jpg</div>
             </div>
           </div>
-          <span class="num">03</span>
-          <h3>Drag it where it goes</h3>
-          <p>Open your stack with a click or <span class="keys"><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span>, pick one item or several, and drag them into an email, a folder, a chat or a document.</p>
-        </li>
-      </ol>
+        </div>
+        <ol class="tour-steps">
+          <li class="on">
+            <span class="num">01</span>
+            <h3>Drag it to the edge</h3>
+            <p>Drag a file, some text or a link to the side of your screen. A drop zone appears. Let go, and it's kept.</p>
+          </li>
+          <li>
+            <span class="num">02</span>
+            <h3>Carry on</h3>
+            <p>Switch apps, close windows, even restart your PC. Everything waits in your stack until you remove it.</p>
+          </li>
+          <li>
+            <span class="num">03</span>
+            <h3>Drag it where it goes</h3>
+            <p>Open your stack with a click or <span class="keys"><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></span>, pick one item or several, and drag them into an email, a folder, a chat or a document.</p>
+          </li>
+        </ol>
+      </div>
     </div>
   </section>
 
   <section id="features" aria-labelledby="features-title">
     <div class="wrap">
-      <p class="kicker">Features</p>
-      <h2 id="features-title">Made to stay out of your way</h2>
+      <div class="head split">
+        <div><p class="badge">Features</p><h2 id="features-title">Made to stay out of your way</h2></div>
+        <p class="desc">A small app that waits at the edge of your screen. No account, no cloud and nothing to learn: drag in, drag out.</p>
+      </div>
       <div class="grid">
         <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-apps"/></svg></span><h3>Works with your apps</h3><p>If you can drop something into an app, you can drop it from Cairn: Explorer, your browser, email, chat and more.</p></div>
         <div class="card"><span class="ico"><svg aria-hidden="true"><use href="#i-stack"/></svg></span><h3>Several at once</h3><p>Gather files from different folders as you go, then drag them all out together in one move.</p></div>
@@ -174,7 +183,7 @@
 
   <section id="faq" aria-labelledby="faq-title">
     <div class="wrap faq">
-      <div><p class="kicker">FAQ</p><h2 id="faq-title">Questions</h2></div>
+      <div><p class="badge">FAQ</p><h2 id="faq-title">Questions</h2><p class="desc">Something else? <a href="https://github.com/mahmoudalnkeeb/cairn/issues" rel="noopener">Ask on GitHub</a>.</p></div>
       <div class="qs">
         <details>
           <summary>Is Cairn free?</summary>
@@ -219,14 +228,21 @@
   <section id="download" aria-labelledby="download-title">
     <div class="wrap">
       <div class="cta">
-        <svg class="cta-mark" aria-hidden="true"><use href="#i-mark"/></svg>
-        <h2 id="download-title">Give it a try</h2>
-        <p>Download the latest version from GitHub. No installer and no account, just open it and drag something to the edge of your screen.</p>
-        <div class="actions">
-          <a class="btn primary" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener"><svg aria-hidden="true"><use href="#i-windows"/></svg>Download for Windows</a>
-          <a class="btn ghost" href="https://github.com/mahmoudalnkeeb/cairn/releases" rel="noopener">All releases</a>
+        <div class="cta-text">
+          <p class="badge">Download</p>
+          <h2 id="download-title">Give it a try</h2>
+          <p>Download the latest version from GitHub. No installer and no account: open it and drag something to the edge of your screen.</p>
+          <div class="actions">
+            <a class="btn primary chipped" href="https://github.com/mahmoudalnkeeb/cairn/releases/latest" rel="noopener">Download for Windows<span class="chip-ico"><svg aria-hidden="true"><use href="#i-down"/></svg></span></a>
+            <a class="btn ghost" href="https://github.com/mahmoudalnkeeb/cairn/releases" rel="noopener">All releases</a>
+          </div>
         </div>
-        <p class="fine">Free and open source · Windows 10 and 11</p>
+        <dl class="facts">
+          <div><dt>Download size</dt><dd>Under 1 MB</dd></div>
+          <div><dt>Works on</dt><dd>Windows 10 and 11</dd></div>
+          <div><dt>Account</dt><dd>None needed</dd></div>
+          <div><dt>License</dt><dd>Free, GPL-3.0</dd></div>
+        </dl>
       </div>
     </div>
   </section>
@@ -247,8 +263,34 @@
       <a class="btn kofi small" href="https://ko-fi.com/mahmoudalnakeeb" rel="noopener"><svg aria-hidden="true"><use href="#i-kofi"/></svg>Support on Ko-fi</a>
     </div>
   </div>
+  <div class="wordmark" aria-hidden="true">cairn</div>
 </footer>
 <script>
+  // How it works: one picture at a time beside the steps. Steps advance on
+  // their own every 4.8 s, one loop of the pictures, until one is chosen.
+  (() => {
+    const steps = [...document.querySelectorAll('.tour-steps li')];
+    const pics = [...document.querySelectorAll('.tour-stage .pic')];
+    if (!steps.length) return;
+    document.documentElement.classList.add('js');
+    let at = 0, timer;
+    const show = i => {
+      at = i;
+      steps.forEach((s, k) => { s.classList.toggle('on', k === i); s.setAttribute('aria-current', k === i ? 'step' : 'false'); });
+      pics.forEach((p, k) => p.classList.toggle('on', k === i));
+      pics[i].getAnimations({ subtree: true }).forEach(a => { a.currentTime = 0; });
+    };
+    const pick = i => { clearInterval(timer); show(i); };
+    steps.forEach((s, i) => {
+      s.tabIndex = 0;
+      s.setAttribute('role', 'button');
+      s.addEventListener('click', () => pick(i));
+      s.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(i); } });
+    });
+    show(0);
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) timer = setInterval(() => show((at + 1) % steps.length), 4800);
+  })();
+
   // Scale the 1120 × 630 desktop drawing to the frame's width.
   (() => {
     const desk = document.querySelector('.desk');
