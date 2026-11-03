@@ -57,6 +57,7 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Open or close the stack | Click the edge tab, left-click the tray icon, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> |
 | Select | Click, <kbd>Ctrl</kbd>+click, <kbd>Shift</kbd>+click, arrow keys, <kbd>Ctrl</kbd>+<kbd>A</kbd> |
 | Use items | Drag them out of the stack |
+| Send another form | Hold <kbd>Alt</kbd> as you start dragging: a file goes as its path, an image as a picture, text as a .txt file, a link as a .url shortcut, several items as lines of text |
 | Open or paste | Double-click or <kbd>Enter</kbd> |
 | Take a closer look | <kbd>Space</kbd> shows the item larger beside the stack; <kbd>Space</kbd> or <kbd>Esc</kbd> closes it |
 | More actions | Right-click, or the <kbd>Menu</kbd> key |
@@ -85,6 +86,7 @@ To remove Cairn, quit it from the tray menu, delete `Cairn.exe`, and delete the 
 
 - The idle tab can sit over part of a maximized window's scrollbar. Drag the tab along the edge or switch edges to avoid it.
 - Windows blocks dragging into or out of apps running as administrator.
+- Holding <kbd>Alt</kbd> to send another form only counts when the drag starts. Pressing it in the middle of a drag doesn't change what is sent.
 
 ## Roadmap
 

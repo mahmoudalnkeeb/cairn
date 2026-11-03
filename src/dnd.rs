@@ -597,6 +597,112 @@ pub fn data_object(item: &ShelfItem) -> Option<IDataObject> {
     }
 }
 
+/// Plain text as a data object.
+fn text_object(text: &str) -> Option<IDataObject> {
+    let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None).ok()? };
+    set_utf16(&obj, CF_UNICODETEXT.0, text)?;
+    Some(obj)
+}
+
+/// What a drag out sends when Alt is held as it starts, and the words shown
+/// under the drag image: a file's path (or an image file's picture), text
+/// as a .txt file, a link as a .url shortcut, several items as lines of text.
+pub fn data_object_alt(items: &[&ShelfItem]) -> Option<(IDataObject, &'static str)> {
+    let one = match items {
+        [one] => one,
+        _ => {
+            let lines: Vec<String> = items
+                .iter()
+                .map(|i| match &i.kind {
+                    Kind::File(p) => p.to_string_lossy().into_owned(),
+                    Kind::Text(t) | Kind::Link(t) => t.clone(),
+                })
+                .collect();
+            return Some((text_object(&lines.join("\r\n"))?, "As text"));
+        }
+    };
+    let file = |path: PathBuf| data_object(&ShelfItem { id: 0, kind: Kind::File(path), icon: None, extra: Default::default() });
+    match &one.kind {
+        Kind::File(p) => match picture(p) {
+            Some(obj) => Some((obj, "As picture")),
+            None => Some((text_object(&p.to_string_lossy())?, "As path")),
+        },
+        Kind::Text(t) => {
+            let name = t.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Text");
+            let body = [&b"\xEF\xBB\xBF"[..], t.replace("\r\n", "\n").replace('\n', "\r\n").as_bytes()].concat();
+            Some((file(write_out(&out_dir()?, name, "txt", &body)?)?, "As file"))
+        }
+        Kind::Link(l) => {
+            let url = if l.starts_with("www.") { format!("https://{l}") } else { l.clone() };
+            let name = crate::shelf::label(one);
+            Some((file(write_out(&out_dir()?, &name, "url", format!("[InternetShortcut]\r\nURL={url}\r\n").as_bytes())?)?, "As shortcut"))
+        }
+    }
+}
+
+/// Where files made for a drag out go. Cairn deletes the folder at its
+/// next start, like any copy no item holds.
+fn out_dir() -> Option<PathBuf> {
+    Some(crate::shelf::owned_dir()?.join("out"))
+}
+
+/// Writes a file for a drag out into `dir`, named from `name`.
+fn write_out(dir: &std::path::Path, name: &str, ext: &str, bytes: &[u8]) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let stem: String = safe_parts(name).map(|p| p.join(" ")).unwrap_or_else(|| "Item".into()).chars().take(60).collect();
+    let path = crate::shelf::free_path(dir, &format!("{}.{ext}", stem.trim_end_matches('.')));
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
+}
+
+/// An image file as picture data, for apps that take a pasted picture but
+/// not a file: CF_DIB always, and the file itself as "PNG" when it is one.
+fn picture(path: &std::path::Path) -> Option<IDataObject> {
+    let dib = dib_from_image(path)?;
+    let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None).ok()? };
+    set_global(&obj, CF_DIB.0, &dib)?;
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png"))
+        && let Ok(png) = std::fs::read(path)
+    {
+        set_global(&obj, png_format(), &png)?;
+    }
+    Some(obj)
+}
+
+/// Decodes an image file with Windows' own codecs into a bottom-up 32-bit
+/// DIB. None for files that are not images, and for very large ones.
+fn dib_from_image(path: &std::path::Path) -> Option<Vec<u8>> {
+    use windows::Win32::Graphics::Imaging::*;
+    unsafe {
+        let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
+        let decoder = wic.CreateDecoderFromFilename(&HSTRING::from(path.as_os_str()), None, GENERIC_READ, WICDecodeMetadataCacheOnDemand).ok()?;
+        let frame = decoder.GetFrame(0).ok()?;
+        let bgra = wic.CreateFormatConverter().ok()?;
+        bgra.Initialize(&frame, &GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeCustom).ok()?;
+        let (mut w, mut h) = (0u32, 0u32);
+        bgra.GetSize(&mut w, &mut h).ok()?;
+        if w == 0 || h == 0 || w as u64 * h as u64 > 50_000_000 {
+            return None;
+        }
+        let stride = w * 4;
+        let mut pixels = vec![0u8; (stride * h) as usize];
+        bgra.CopyPixels(std::ptr::null(), stride, &mut pixels).ok()?;
+        let mut out = Vec::with_capacity(40 + pixels.len());
+        for v in [40u32, w, h] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&32u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&(pixels.len() as u32).to_le_bytes());
+        out.extend_from_slice(&[0; 16]);
+        for row in pixels.chunks(stride as usize).rev() {
+            out.extend_from_slice(row);
+        }
+        Some(out)
+    }
+}
+
 /// One data object for several items. Files win: if any are selected, only
 /// the files go, as one shell item array, so Explorer and mail clients see a
 /// normal multi-file drag. Otherwise texts and links go as lines of text.
@@ -638,7 +744,10 @@ pub fn data_object_many(items: &[&ShelfItem]) -> Option<IDataObject> {
 /// Runs the modal drag loop with `image` under the cursor. Callers must not
 /// hold app state across it, since window messages keep flowing while it
 /// runs. The shell owns the image's bitmap once it takes it.
-pub fn drag_out(data: &IDataObject, image: Option<SHDRAGIMAGE>) -> DROPEFFECT {
+/// `link` allows the target to make a shortcut. Drags with Alt held turn it
+/// off: Explorer reads Alt as "make a shortcut", which would point at the
+/// temporary file instead of copying it.
+pub fn drag_out(data: &IDataObject, image: Option<SHDRAGIMAGE>, link: bool) -> DROPEFFECT {
     if let Some(img) = image {
         let helper: Option<IDragSourceHelper2> = unsafe { CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok() };
         let taken = helper.is_some_and(|h| unsafe {
@@ -654,7 +763,8 @@ pub fn drag_out(data: &IDataObject, image: Option<SHDRAGIMAGE>) -> DROPEFFECT {
     let source: IDropSource = DropSource { data: data.clone() }.into();
     let mut effect = DROPEFFECT_NONE;
     unsafe {
-        let _ = DoDragDrop(data, &source, DROPEFFECT_COPY | DROPEFFECT_LINK, &mut effect);
+        let allowed = if link { DROPEFFECT_COPY | DROPEFFECT_LINK } else { DROPEFFECT_COPY };
+        let _ = DoDragDrop(data, &source, allowed, &mut effect);
     }
     effect
 }
@@ -692,6 +802,51 @@ mod tests {
 
     fn item(kind: Kind) -> ShelfItem {
         ShelfItem { id: 0, kind, icon: None, extra: Default::default() }
+    }
+
+    #[test]
+    fn alt_sends_paths_pictures_and_lines() {
+        unsafe {
+            let _ = OleInitialize(None);
+        }
+        let dir = std::env::temp_dir().join("cairn-alt-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A file that is not an image goes as its path.
+        let doc = dir.join("notes.md");
+        std::fs::write(&doc, "# notes").unwrap();
+        let (obj, form) = data_object_alt(&[&item(Kind::File(doc.clone()))]).unwrap();
+        assert_eq!((read_utf16(&obj, CF_UNICODETEXT.0).unwrap(), form), (doc.to_string_lossy().into_owned(), "As path"));
+        // An image file goes as a picture: a 2×1 bitmap comes back as a 32-bit DIB.
+        let mut dib = Vec::new();
+        for v in [40u32, 2, 1] {
+            dib.extend_from_slice(&v.to_le_bytes());
+        }
+        dib.extend_from_slice(&1u16.to_le_bytes());
+        dib.extend_from_slice(&24u16.to_le_bytes());
+        dib.extend_from_slice(&[0; 24]);
+        dib.extend_from_slice(&[255, 0, 0, 0, 255, 0, 0, 0]);
+        let bmp = dir.join("two.bmp");
+        std::fs::write(&bmp, bmp_from_dib(&dib).unwrap()).unwrap();
+        let (obj, form) = data_object_alt(&[&item(Kind::File(bmp))]).unwrap();
+        let out = read_bytes(&obj, CF_DIB.0).unwrap();
+        assert_eq!(form, "As picture");
+        assert_eq!((u32::from_le_bytes(out[4..8].try_into().unwrap()), u16::from_le_bytes(out[14..16].try_into().unwrap())), (2, 32));
+        // Several items go as lines.
+        let (t, l) = (item(Kind::Text("one".into())), item(Kind::Link("https://e.com".into())));
+        let (obj, form) = data_object_alt(&[&t, &l]).unwrap();
+        assert_eq!((read_utf16(&obj, CF_UNICODETEXT.0).unwrap().as_str(), form), ("one\r\nhttps://e.com", "As text"));
+    }
+
+    #[test]
+    fn files_for_a_drag_out_get_safe_free_names() {
+        let dir = std::env::temp_dir().join("cairn-out-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = write_out(&dir, "Meeting: 4pm?", "txt", b"x").unwrap();
+        let b = write_out(&dir, "Meeting: 4pm?", "txt", b"y").unwrap();
+        assert_eq!(a.file_name().unwrap(), "Meeting_ 4pm_.txt");
+        assert_eq!(b.file_name().unwrap(), "Meeting_ 4pm_ (2).txt");
+        assert_eq!(write_out(&dir, "..", "url", b"z").unwrap().file_name().unwrap(), "Item.url");
     }
 
     #[test]

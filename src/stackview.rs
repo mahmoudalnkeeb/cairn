@@ -324,15 +324,18 @@ fn swatch(p: &Painter, t: &Theme, x: f32, y: f32, [r, g, b, a]: [u8; 4]) {
 }
 
 /// What a drag out shows under the cursor: the grabbed tile, the rest of
-/// the selection stacked behind it, and a count when there are several.
-fn drag_image(app: &App, index: usize, count: usize, grab: POINT) -> Option<SHDRAGIMAGE> {
+/// the selection stacked behind it, a count when there are several, and
+/// what is being sent ("As path") when Alt changed it.
+fn drag_image(app: &App, index: usize, count: usize, grab: POINT, form: Option<&str>) -> Option<SHDRAGIMAGE> {
     const X: f32 = 6.0;
     const Y: f32 = 14.0;
+    const FORM_H: f32 = 20.0;
     let item = app.stack.items.get(index)?;
     let rect = tile_screen_rect(app, index)?;
     let dpi = app.stack_view.dpi;
     let s = dpi as f32 / 96.0;
-    let (w, h) = (((X + TILE_W + 22.0) * s).ceil() as i32, ((Y + TILE_H + 8.0) * s).ceil() as i32);
+    let below = if form.is_some() { FORM_H + 4.0 } else { 0.0 };
+    let (w, h) = (((X + TILE_W + 22.0) * s).ceil() as i32, ((Y + TILE_H + 8.0 + below) * s).ceil() as i32);
     let surf = Surface::new(&app.gfx, w, h).ok()?;
     let (g, t, f) = (&app.gfx, &app.theme, fonts(&app.gfx));
     let badge = g.text_format_aligned(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER).ok();
@@ -353,6 +356,12 @@ fn drag_image(app: &App, index: usize, count: usize, grab: POINT) -> Option<SHDR
             let (bx, by) = (X + TILE_W + 2.0 - bw / 2.0, Y - 10.0);
             p.fill_rounded(bx, by, bw, 20.0, 10.0, t.primary);
             p.text(&label, fm, bx, by, bw, 20.0, t.surface);
+        }
+        if let (Some(words), Some(fm)) = (form, &f.caption) {
+            let y = Y + TILE_H + 4.0;
+            p.fill_rounded(X, y, TILE_W, FORM_H, FORM_H / 2.0, t.surface);
+            p.stroke_rounded(X + 0.5, y + 0.5, TILE_W - 1.0, FORM_H - 1.0, FORM_H / 2.0, 1.0, t.outline);
+            p.text(words, fm, X, y, TILE_W, FORM_H, t.text);
         }
     })
     .ok()?;
@@ -1184,12 +1193,14 @@ fn start_drag(app: &mut App, index: usize, grab: POINT) {
         render(app);
     }
     let chosen = app.stack_view.sel.ordered(&ids);
+    // Alt held as the drag starts sends another form of the items.
+    let alt = key_down(VK_MENU);
     let data = {
         let items: Vec<&ShelfItem> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).collect();
-        dnd::data_object_many(&items)
+        if alt { dnd::data_object_alt(&items).map(|(d, f)| (d, Some(f))) } else { dnd::data_object_many(&items).map(|d| (d, None)) }
     };
-    let Some(data) = data else { return };
-    let image = drag_image(app, index, chosen.len(), grab);
+    let Some((data, form)) = data else { return };
+    let image = drag_image(app, index, chosen.len(), grab, form);
     let d = ms(app, HOVER_MS);
     let v = &mut app.stack_view;
     v.lifted = chosen;
@@ -1197,7 +1208,7 @@ fn start_drag(app: &mut App, index: usize, grab: POINT) {
     v.lift.set(1.0, d);
     animate(app);
     // Messages keep flowing during the drag; hold no app state across it.
-    dnd::drag_out(&data, image);
+    dnd::drag_out(&data, image, !alt);
     if let Some(app) = crate::app_mut() {
         app.stack_view.lift.set(0.0, d);
         animate(app);
