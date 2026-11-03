@@ -294,8 +294,19 @@ pub fn read(data: &IDataObject) -> Option<Dropped> {
         return Some(Dropped::Paths(paths));
     }
     if let Some(text) = read_utf16(data, url_format()).or_else(|| read_utf16(data, CF_UNICODETEXT.0)) {
+        // An image copied or dragged from a browser comes with its address.
+        // Keep the picture: the address may stop working once the page closes.
+        if crate::shelf::looks_like_link(&text)
+            && let Some(image) = read_image(data)
+        {
+            return Some(image);
+        }
         return Some(Dropped::Text(text));
     }
+    read_image(data)
+}
+
+fn read_image(data: &IDataObject) -> Option<Dropped> {
     if let Some(png) = read_bytes(data, png_format()) {
         return Some(Dropped::Image { bytes: png, ext: "png" });
     }
@@ -629,6 +640,19 @@ mod tests {
         let (t, l) = (Kind::Text("one".into()), Kind::Link("https://example.com".into()));
         let obj = data_object_many(&[&t, &l]).expect("data object");
         assert!(matches!(read(&obj), Some(Dropped::Text(s)) if s == "one\r\nhttps://example.com"));
+    }
+
+    #[test]
+    fn a_browser_image_keeps_the_picture_not_its_address() {
+        let with = |text: &str| {
+            let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None) }.unwrap();
+            set_utf16(&obj, CF_UNICODETEXT.0, text).unwrap();
+            set_global(&obj, png_format(), b"\x89PNG fake").unwrap();
+            read(&obj)
+        };
+        assert!(matches!(with("https://example.com/cat.png"), Some(Dropped::Image { ext: "png", .. })));
+        // Copied cells from Excel come with a picture too; the text wins.
+        assert!(matches!(with("Q3\t1200"), Some(Dropped::Text(t)) if t == "Q3\t1200"));
     }
 
     #[test]

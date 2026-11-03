@@ -136,7 +136,7 @@ pub fn copy_in(src: &Path) -> Option<PathBuf> {
     Some(dest)
 }
 
-fn looks_like_link(s: &str) -> bool {
+pub fn looks_like_link(s: &str) -> bool {
     let s = s.trim();
     !s.contains(char::is_whitespace) && (s.starts_with("http://") || s.starts_with("https://") || s.starts_with("www."))
 }
