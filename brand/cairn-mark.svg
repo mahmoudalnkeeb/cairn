@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Cairn">
   <title>Cairn mark</title>
-  <!-- Three stacked stones on a 64 grid. The top stone, the one just placed, carries the accent. -->
-  <rect x="8" y="43" width="48" height="13" rx="6.5" fill="#b9b4aa"/>
-  <rect x="11" y="28" width="35" height="12" rx="6" fill="#b9b4aa"/>
-  <rect x="26" y="14" width="19" height="11" rx="5.5" fill="#c6e36b"/>
+  <!-- Three hewn stones on a 64 grid, stacked off-center. The top stone, the one just placed, is tilted 10° and carries the accent. -->
+  <path d="M29.5 40C46.6 40 58 43.71 58 49.28C58 55.06 54.49 56 32.94 56C9.77 56 6 55.06 6 49.28C6 43.71 15.4 40 29.5 40Z" fill="#b9b4aa"/>
+  <path d="M32.16 23.5C41.67 23.5 48 26.63 48 31.33C48 36.21 45.27 37 28.5 37C13.45 37 11 36.21 11 31.33C11 26.63 19.47 23.5 32.16 23.5Z" fill="#b9b4aa"/>
+  <path d="M35 9.59C41.21 8.49 45.81 10.39 46.5 14.33C47.22 18.42 45.89 19.34 37 20.91C28.11 22.48 26.54 22.07 25.82 17.98C25.12 14.04 28.8 10.68 35 9.59Z" fill="#c6e36b"/>
 </svg>

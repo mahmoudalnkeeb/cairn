@@ -374,10 +374,31 @@ impl Painter<'_> {
 
     /// The Cairn mark (brand/cairn-mark.svg) in a `size` square at x, y.
     pub fn cairn_mark(&self, x: f32, y: f32, size: f32, base: Color, top: Color) {
+        // Each stone is a start point and four cubic segments on the 64 grid, copied from the SVG.
+        const STONES: [[(f32, f32); 13]; 3] = [
+            [(29.50, 40.00), (46.60, 40.00), (58.00, 43.71), (58.00, 49.28), (58.00, 55.06), (54.49, 56.00), (32.94, 56.00), (9.77, 56.00), (6.00, 55.06), (6.00, 49.28), (6.00, 43.71), (15.40, 40.00), (29.50, 40.00)],
+            [(32.16, 23.50), (41.67, 23.50), (48.00, 26.63), (48.00, 31.33), (48.00, 36.21), (45.27, 37.00), (28.50, 37.00), (13.45, 37.00), (11.00, 36.21), (11.00, 31.33), (11.00, 26.63), (19.47, 23.50), (32.16, 23.50)],
+            [(35.00, 9.59), (41.21, 8.49), (45.81, 10.39), (46.50, 14.33), (47.22, 18.42), (45.89, 19.34), (37.00, 20.91), (28.11, 22.48), (26.54, 22.07), (25.82, 17.98), (25.12, 14.04), (28.80, 10.68), (35.00, 9.59)],
+        ];
         let k = size / 64.0;
-        let stones = [(8.0, 43.0, 48.0, 13.0, base), (11.0, 28.0, 35.0, 12.0, base), (26.0, 14.0, 19.0, 11.0, top)];
-        for (sx, sy, w, h, c) in stones {
-            self.fill_rounded(x + sx * k, y + sy * k, w * k, h * k, h * k / 2.0, c);
+        let pt = |(px, py): (f32, f32)| D2D_POINT_2F { x: x + px * k, y: y + py * k };
+        unsafe {
+            let Ok(factory) = self.rt.GetFactory() else { return };
+            for (i, s) in STONES.iter().enumerate() {
+                let Ok(geo) = factory.CreatePathGeometry() else { return };
+                let Ok(sink) = geo.Open() else { return };
+                sink.BeginFigure(pt(s[0]), D2D1_FIGURE_BEGIN_FILLED);
+                for c in s[1..].chunks(3) {
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT { point1: pt(c[0]), point2: pt(c[1]), point3: pt(c[2]) });
+                }
+                sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                if sink.Close().is_err() {
+                    return;
+                }
+                if let Some(b) = self.brush(if i == 2 { top } else { base }) {
+                    self.rt.FillGeometry(&geo, &b, None);
+                }
+            }
         }
     }
 

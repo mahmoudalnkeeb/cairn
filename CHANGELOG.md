@@ -2,6 +2,12 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-11-03
+
+### Changed
+
+- A new Cairn mark. The stones now look like stones, and the top one is tilted, as if just set down. It shows on the drop zone, the app icon and the website.
+
 ## [0.4.1] - 2026-11-03
 
 ### Added
@@ -71,6 +77,7 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.4.2]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.2
 [0.4.1]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.1
 [0.4.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.3.0
