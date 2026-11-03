@@ -6,15 +6,30 @@ use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::SIZE;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::Com::*;
 use windows::Win32::UI::Shell::*;
-use windows::core::HSTRING;
+use windows::core::{HSTRING, Interface};
 
 
+use crate::detect::{self, Form};
 use crate::store;
 
-const MAGIC: &[u8; 8] = b"CAIRNST2";
+const MAGIC: &[u8; 8] = b"CAIRNST3";
+/// 0.3 to 0.5: named stacks, items with no extra fields.
+const MAGIC_V2: &[u8; 8] = b"CAIRNST2";
 /// 0.1 and 0.2 kept one unnamed stack.
 const MAGIC_V1: &[u8; 8] = b"CAIRNST1";
+/// Extra item fields, saved as (key, length, bytes) so unknown keys can be
+/// skipped and new ones added.
+const FIELD_TRACK: u8 = 1;
+const FIELD_TITLE: u8 = 2;
+const FIELD_HTML: u8 = 3;
+const FIELD_RTF: u8 = 4;
+const FIELD_FORM: u8 = 5;
+const FIELD_NOTE: u8 = 6;
+/// `Extra::form` values: the user chose "Show as text" or "Show as code".
+pub const AS_TEXT: u8 = 1;
+pub const AS_CODE: u8 = 2;
 const ICON_PX: i32 = 48;
 
 /// Premultiplied BGRA pixels, ready for Direct2D.
@@ -44,6 +59,68 @@ pub struct ShelfItem {
     /// Shell icon or thumbnail, loaded on first draw. `Some(None)` means
     /// loading failed and a glyph is drawn instead.
     pub icon: Option<Option<Thumb>>,
+    pub extra: Extra,
+}
+
+/// What an item keeps beside its kind. Each is saved as an extra field.
+#[derive(Default)]
+pub struct Extra {
+    /// The shell's link data for a file, saved when it was added, so
+    /// Windows can find the file again after it moves on the same drive.
+    pub track: Option<Vec<u8>>,
+    /// A link's page title, when the browser sent one.
+    pub title: Option<String>,
+    /// Formatted versions of a text item, as the source app gave them:
+    /// "HTML Format" (with its header) and "Rich Text Format".
+    pub html: Option<Vec<u8>>,
+    pub rtf: Option<Vec<u8>>,
+    /// Overrides whether plain text shows as code: `AS_TEXT` or `AS_CODE`.
+    pub form: Option<u8>,
+    /// A text item typed into the stack as a note.
+    pub note: bool,
+}
+
+impl Extra {
+    fn fields(&self) -> Vec<(u8, &[u8])> {
+        [
+            (FIELD_TRACK, self.track.as_deref()),
+            (FIELD_TITLE, self.title.as_deref().map(str::as_bytes)),
+            (FIELD_HTML, self.html.as_deref()),
+            (FIELD_RTF, self.rtf.as_deref()),
+            (FIELD_FORM, self.form.as_ref().map(std::slice::from_ref)),
+            (FIELD_NOTE, self.note.then_some(&[1u8][..])),
+        ]
+        .into_iter()
+        .filter_map(|(key, v)| Some((key, v?)))
+        .collect()
+    }
+
+    fn set(&mut self, key: u8, bytes: Vec<u8>) {
+        match key {
+            FIELD_TRACK => self.track = Some(bytes),
+            FIELD_TITLE => self.title = String::from_utf8(bytes).ok(),
+            FIELD_HTML => self.html = Some(bytes),
+            FIELD_RTF => self.rtf = Some(bytes),
+            FIELD_FORM => self.form = bytes.first().copied(),
+            FIELD_NOTE => self.note = true,
+            _ => {}
+        }
+    }
+
+    pub fn is_rich(&self) -> bool {
+        self.html.is_some() || self.rtf.is_some()
+    }
+}
+
+impl ShelfItem {
+    pub fn new(id: u64, kind: Kind, mut extra: Extra) -> ShelfItem {
+        if let Kind::File(p) = &kind
+            && p.exists()
+        {
+            extra.track = track(p);
+        }
+        ShelfItem { id, kind, icon: None, extra }
+    }
 }
 
 /// Every named stack. The current one's items live in `items`, so most code
@@ -63,6 +140,10 @@ pub const DEFAULT_NAME: &str = "Stack";
 pub enum Dropped {
     Paths(Vec<PathBuf>),
     Text(String),
+    /// A link a browser sent with its page title.
+    Link { url: String, title: String },
+    /// Text with the formatted versions the source app offered.
+    Rich { text: String, html: Option<Vec<u8>>, rtf: Option<Vec<u8>> },
     /// Image data with no file behind it, such as a screenshot.
     Image { bytes: Vec<u8>, ext: &'static str },
 }
@@ -88,6 +169,14 @@ fn free_name(dir: &Path, stem: &str, ext: &str) -> PathBuf {
         .unwrap()
 }
 
+/// A free path in `dir` for a file or folder name, keeping its extension.
+pub fn free_path(dir: &Path, name: &str) -> PathBuf {
+    let p = Path::new(name);
+    let stem = p.file_stem().map_or(name.into(), |s| s.to_string_lossy());
+    let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    free_name(dir, &stem, &ext)
+}
+
 fn stamp() -> String {
     let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     format!("{:04}-{:02}-{:02} {:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
@@ -109,7 +198,7 @@ pub fn copy_in(src: &Path) -> Option<PathBuf> {
     Some(dest)
 }
 
-fn looks_like_link(s: &str) -> bool {
+pub fn looks_like_link(s: &str) -> bool {
     let s = s.trim();
     !s.contains(char::is_whitespace) && (s.starts_with("http://") || s.starts_with("https://") || s.starts_with("www."))
 }
@@ -158,6 +247,13 @@ impl Shelf {
                 out.extend_from_slice(&item.id.to_le_bytes());
                 out.push(tag);
                 put_str(&mut out, &body);
+                let fields = item.extra.fields();
+                out.push(fields.len() as u8);
+                for (key, bytes) in fields {
+                    out.push(key);
+                    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                    out.extend_from_slice(bytes);
+                }
             }
         }
         out
@@ -201,11 +297,53 @@ impl Shelf {
         let all = self.items.iter_mut().chain(self.others.iter_mut().flatten());
         match all.into_iter().find(|i| i.id == id) {
             Some(item) => {
+                item.extra.track = track(&path);
                 item.kind = Kind::File(path);
                 item.icon = None;
                 true
             }
             None => false,
+        }
+    }
+
+    /// Asks Windows where a missing file in the current stack went, using
+    /// the link data saved when it was added, and points the item there.
+    pub fn find_again(&mut self, id: u64) -> Option<PathBuf> {
+        let item = self.items.iter().find(|i| i.id == id)?;
+        let found = resolve(item.extra.track.as_deref()?)?;
+        self.replace_path(id, found.clone());
+        Some(found)
+    }
+
+    /// "Show as text" or "Show as code" for a text item in the current stack.
+    pub fn set_form(&mut self, id: u64, form: u8) {
+        if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+            item.extra.form = Some(form);
+        }
+    }
+
+    /// Puts an empty note at the front of the current stack and returns its id.
+    pub fn add_note(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.items.insert(0, ShelfItem::new(id, Kind::Text(String::new()), Extra { note: true, ..Extra::default() }));
+        id
+    }
+
+    /// Saves a note's text, or removes the note when it is left empty.
+    pub fn set_note(&mut self, id: u64, text: String) {
+        if text.trim().is_empty() {
+            self.remove(id);
+        } else if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+            item.kind = Kind::Text(text);
+        }
+    }
+
+    /// Renames a link; an empty name goes back to showing its address.
+    pub fn set_title(&mut self, id: u64, title: &str) {
+        if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+            let title = title.trim();
+            item.extra.title = (!title.is_empty()).then(|| title.to_string());
         }
     }
 
@@ -257,17 +395,21 @@ impl Shelf {
 
     /// Adds dropped content, skipping duplicates. Returns how many were new.
     pub fn add(&mut self, dropped: Dropped) -> usize {
-        let kinds: Vec<Kind> = match dropped {
-            Dropped::Paths(paths) => paths.into_iter().map(Kind::File).collect(),
-            Dropped::Image { bytes, ext } => owned_dir().and_then(|d| save_image(&d, &bytes, ext, &stamp())).map(Kind::File).into_iter().collect(),
+        let plain = Extra::default;
+        let kinds: Vec<(Kind, Extra)> = match dropped {
+            Dropped::Paths(paths) => paths.into_iter().map(|p| (Kind::File(p), plain())).collect(),
+            Dropped::Image { bytes, ext } => owned_dir().and_then(|d| save_image(&d, &bytes, ext, &stamp())).map(|p| (Kind::File(p), plain())).into_iter().collect(),
+            Dropped::Link { url, title } => vec![(Kind::Link(url.trim().to_string()), Extra { title: Some(title), ..plain() })],
+            Dropped::Rich { text, .. } if text.trim().is_empty() => Vec::new(),
+            Dropped::Rich { text, html, rtf } => vec![(Kind::Text(text), Extra { html, rtf, ..plain() })],
             Dropped::Text(t) if t.trim().is_empty() => Vec::new(),
-            Dropped::Text(t) if looks_like_link(&t) => vec![Kind::Link(t.trim().to_string())],
-            Dropped::Text(t) => vec![Kind::Text(t)],
+            Dropped::Text(t) if looks_like_link(&t) => vec![(Kind::Link(t.trim().to_string()), plain())],
+            Dropped::Text(t) => vec![(Kind::Text(t), plain())],
         };
         let mut added = 0;
-        for kind in kinds {
+        for (kind, extra) in kinds {
             if !self.contains(&kind) {
-                self.items.insert(added, ShelfItem { id: self.next_id, kind, icon: None });
+                self.items.insert(added, ShelfItem::new(self.next_id, kind, extra));
                 self.next_id += 1;
                 added += 1;
             }
@@ -302,7 +444,14 @@ fn prune<'a>(dir: &Path, items: impl Iterator<Item = &'a ShelfItem>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let p = e.path();
-        if p.is_file() && !used.contains(&p.as_path()) {
+        if used.contains(&p.as_path()) {
+            continue;
+        }
+        // Folders come from dropped folders that had no path, like one
+        // dragged out of a zip.
+        if p.is_dir() {
+            let _ = fs::remove_dir_all(p);
+        } else {
             let _ = fs::remove_file(p);
         }
     }
@@ -337,7 +486,8 @@ fn parse(raw: &[u8]) -> Option<Saved> {
         Some(s)
     };
     let magic = take(8)?;
-    let named = magic == MAGIC;
+    let fields = magic == MAGIC;
+    let named = fields || magic == MAGIC_V2;
     if !named && magic != MAGIC_V1 {
         return None;
     }
@@ -364,7 +514,13 @@ fn parse(raw: &[u8]) -> Option<Saved> {
                 2 => Kind::Link(body),
                 _ => return None,
             };
-            items.push(ShelfItem { id, kind, icon: None });
+            let mut item = ShelfItem { id, kind, icon: None, extra: Extra::default() };
+            for _ in 0..if fields { take(1)?[0] } else { 0 } {
+                let key = take(1)?[0];
+                let len = u32_at(take(4)?) as usize;
+                item.extra.set(key, take(len)?.to_vec());
+            }
+            items.push(item);
         }
         saved.stacks.push((name, items));
     }
@@ -380,9 +536,47 @@ pub fn name(kind: &Kind) -> String {
     }
 }
 
+/// What a plain text item holds: a color, code, an email address, a phone
+/// number or just text. None for other items, and for rich text.
+pub fn form(item: &ShelfItem) -> Option<Form> {
+    match &item.kind {
+        Kind::Text(t) if !item.extra.is_rich() && !item.extra.note => Some(match item.extra.form {
+            Some(AS_TEXT) => Form::Text,
+            Some(AS_CODE) => Form::Code,
+            _ => detect::detect(t),
+        }),
+        _ => None,
+    }
+}
+
+/// The name on an item's tile: a link's page title if it has one, the first
+/// line of code.
+pub fn label(item: &ShelfItem) -> String {
+    match (&item.kind, form(item)) {
+        (Kind::Text(t), Some(Form::Code)) => first_line(t),
+        (Kind::Text(t), _) if item.extra.note => first_line(t),
+        _ => item.extra.title.clone().unwrap_or_else(|| name(&item.kind)),
+    }
+}
+
+fn first_line(t: &str) -> String {
+    preview(t.lines().find(|l| !l.trim().is_empty()).unwrap_or_default())
+}
+
 /// The kind word shown under the name.
-pub fn kind_label(kind: &Kind) -> &'static str {
-    match kind {
+pub fn kind_label(item: &ShelfItem) -> &'static str {
+    if item.extra.note {
+        return "Note";
+    }
+    match form(item) {
+        Some(Form::Code) => return "Code",
+        Some(Form::Color(_)) => return "Color",
+        Some(Form::Email) => return "Email",
+        Some(Form::Phone) => return "Phone",
+        _ => {}
+    }
+    match &item.kind {
+        Kind::Text(_) if item.extra.is_rich() => "Rich text",
         Kind::File(p) if p.is_dir() => "Folder",
         Kind::File(p) if p.exists() => "File",
         Kind::File(_) => "Missing",
@@ -391,12 +585,54 @@ pub fn kind_label(kind: &Kind) -> &'static str {
     }
 }
 
+/// Shell link data for a file: what a .lnk file would hold, including the
+/// IDs Windows uses to track a file moved within its drive.
+fn track(path: &Path) -> Option<Vec<u8>> {
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        link.SetPath(&HSTRING::from(path.as_os_str())).ok()?;
+        let stream = SHCreateMemStream(None)?;
+        link.cast::<IPersistStream>().ok()?.Save(&stream, true).ok()?;
+        let mut len = 0u64;
+        stream.Seek(0, STREAM_SEEK_CUR, Some(&mut len)).ok()?;
+        stream.Seek(0, STREAM_SEEK_SET, None).ok()?;
+        let mut out = vec![0u8; len as usize];
+        let mut read = 0u32;
+        stream.Read(out.as_mut_ptr() as *mut _, len as u32, Some(&mut read)).ok().ok()?;
+        out.truncate(read as usize);
+        Some(out)
+    }
+}
+
+/// Where tracked link data points now, if that file exists. Never shows UI
+/// and never searches folders by name; gives up after half a second.
+fn resolve(data: &[u8]) -> Option<PathBuf> {
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let stream = SHCreateMemStream(Some(data))?;
+        link.cast::<IPersistStream>().ok()?.Load(&stream).ok()?;
+        let flags = (SLR_NO_UI.0 | SLR_NOSEARCH.0) as u32 | (500 << 16);
+        link.Resolve(None, flags).ok()?;
+        let mut buf = vec![0u16; 32768];
+        link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+        let end = buf.iter().position(|&u| u == 0).unwrap_or(buf.len());
+        let path = PathBuf::from(String::from_utf16_lossy(&buf[..end]));
+        path.exists().then_some(path)
+    }
+}
+
 /// The shell's icon or thumbnail for a path, as premultiplied BGRA.
 pub fn shell_icon(path: &Path) -> Option<Thumb> {
+    shell_image(path, ICON_PX)
+}
+
+/// The shell's thumbnail or icon for a path, about `px` pixels on its
+/// longer side.
+pub fn shell_image(path: &Path, px: i32) -> Option<Thumb> {
     unsafe {
         let name = HSTRING::from(path.to_string_lossy().as_ref());
         let factory: IShellItemImageFactory = SHCreateItemFromParsingName(&name, None).ok()?;
-        let bitmap = factory.GetImage(SIZE { cx: ICON_PX, cy: ICON_PX }, SIIGBF_BIGGERSIZEOK).ok()?;
+        let bitmap = factory.GetImage(SIZE { cx: px, cy: px }, SIIGBF_BIGGERSIZEOK).ok()?;
         let mut bm = BITMAP::default();
         GetObjectW(bitmap, size_of::<BITMAP>() as i32, Some(&mut bm as *mut BITMAP as *mut _));
         let (w, h) = (bm.bmWidth, bm.bmHeight.abs());
@@ -462,16 +698,21 @@ mod tests {
         s.add(Dropped::Paths(vec!["C:\\x\\ü.txt".into()]));
         s.add(Dropped::Text("note\nline".into()));
         s.add(Dropped::Text("https://example.com".into()));
+        s.add(Dropped::Link { url: "https://e.com/notes".into(), title: "Release notes".into() });
+        s.add(Dropped::Rich { text: "bold".into(), html: Some(b"<b>bold</b>".to_vec()), rtf: None });
         assert!(parse(&shelf().encode()).unwrap().stacks[0].1.is_empty());
         s.new_stack();
         s.add(Dropped::Text("in the second".into()));
         s.rename(1, "Invoices");
         let back = Shelf::from_stacks(parse(&s.encode()).unwrap());
         assert_eq!(back.names, ["Stack", "Invoices"]);
-        assert_eq!((back.current, back.count(0), back.count(1)), (1, 3, 1));
+        assert_eq!((back.current, back.count(0), back.count(1)), (1, 5, 1));
         let first = &back.others[0];
-        assert!(matches!(&first[2].kind, Kind::File(p) if p.to_string_lossy() == "C:\\x\\ü.txt"));
-        assert!(matches!(&first[0].kind, Kind::Link(l) if l == "https://example.com"));
+        assert!(matches!(&first[4].kind, Kind::File(p) if p.to_string_lossy() == "C:\\x\\ü.txt"));
+        assert!(matches!(&first[2].kind, Kind::Link(l) if l == "https://example.com"));
+        assert_eq!(label(&first[2]), "example.com");
+        assert_eq!(label(&first[1]), "Release notes");
+        assert_eq!(first[0].extra.html.as_deref(), Some(&b"<b>bold</b>"[..]));
     }
 
     #[test]
@@ -514,9 +755,11 @@ mod tests {
         let b = save_image(&dir, b"two", "png", "2026-11-03 120000").unwrap();
         assert_eq!(a.file_name().unwrap(), "Image 2026-11-03 120000.png");
         assert_eq!(b.file_name().unwrap(), "Image 2026-11-03 120000 (2).png");
-        let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None }];
+        assert_eq!(free_path(&dir, "Image 2026-11-03 120000.png").file_name().unwrap(), "Image 2026-11-03 120000 (3).png");
+        fs::create_dir_all(dir.join("unzipped").join("inner")).unwrap();
+        let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None, extra: Extra::default() }];
         prune(&dir, kept.iter());
-        assert!(a.exists() && !b.exists());
+        assert!(a.exists() && !b.exists() && !dir.join("unzipped").exists());
     }
 
     #[test]
@@ -561,8 +804,78 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_format_before_extra_fields() {
+        let mut v2 = MAGIC_V2.to_vec();
+        v2.extend_from_slice(&1u32.to_le_bytes());
+        v2.extend_from_slice(&0u32.to_le_bytes());
+        put_str(&mut v2, "Old");
+        v2.extend_from_slice(&1u32.to_le_bytes());
+        v2.extend_from_slice(&3u64.to_le_bytes());
+        v2.push(2);
+        put_str(&mut v2, "https://example.com");
+        let s = Shelf::from_stacks(parse(&v2).unwrap());
+        assert_eq!(s.names, ["Old"]);
+        assert!(matches!(&s.items[0].kind, Kind::Link(l) if l == "https://example.com"));
+    }
+
+    #[test]
+    fn finds_a_file_moved_on_the_same_drive() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        let dir = std::env::temp_dir().join("cairn-track-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("later")).unwrap();
+        let (before, after) = (dir.join("report.txt"), dir.join("later").join("report.txt"));
+        fs::write(&before, "r").unwrap();
+        let mut s = shelf();
+        s.add(Dropped::Paths(vec![before.clone()]));
+        // The link data survives a save and load.
+        let mut s = Shelf::from_stacks(parse(&s.encode()).unwrap());
+        assert!(s.items[0].extra.track.is_some());
+        fs::rename(&before, &after).unwrap();
+        let found = s.find_again(s.items[0].id).expect("found again");
+        let real = |p: &Path| fs::canonicalize(p).unwrap();
+        assert_eq!(real(&found), real(&after));
+        assert!(matches!(&s.items[0].kind, Kind::File(p) if real(p) == real(&after)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn notes_are_kept_renamed_or_dropped_when_empty() {
+        let mut s = shelf();
+        s.add(Dropped::Text("#3b82f6".into()));
+        let id = s.add_note();
+        assert_eq!(s.items[0].id, id);
+        s.set_note(id, "Send these to Dana\nthe second one first".into());
+        assert_eq!((label(&s.items[0]).as_str(), kind_label(&s.items[0])), ("Send these to Dana", "Note"));
+        let back = Shelf::from_stacks(parse(&s.encode()).unwrap());
+        assert!(back.items[0].extra.note);
+        let empty = s.add_note();
+        s.set_note(empty, "  \n".into());
+        assert_eq!(s.items.len(), 2);
+        s.add(Dropped::Link { url: "https://e.com".into(), title: "Old".into() });
+        let link = s.items[0].id;
+        s.set_title(link, " Trail map ");
+        assert_eq!(label(&s.items[0]), "Trail map");
+        s.set_title(link, "");
+        assert_eq!(label(&s.items[0]), "e.com");
+    }
+
+    #[test]
     fn display_names() {
         assert_eq!(name(&Kind::Link("https://www.example.com/x".into())), "example.com/x");
-        assert_eq!(kind_label(&Kind::File("Z:\\definitely\\missing.bin".into())), "Missing");
+        let item = |kind| ShelfItem { id: 0, kind, icon: None, extra: Extra::default() };
+        assert_eq!(kind_label(&item(Kind::File("Z:\\definitely\\missing.bin".into()))), "Missing");
+        let mut rich = item(Kind::Text("bold".into()));
+        assert_eq!(kind_label(&rich), "Text");
+        rich.extra.rtf = Some(b"{\\rtf1 \\b bold}".to_vec());
+        assert_eq!(kind_label(&rich), "Rich text");
+        let mut code = item(Kind::Text("\nfn main() {\n    run();\n}".into()));
+        assert_eq!((kind_label(&code), label(&code).as_str()), ("Code", "fn main() {"));
+        code.extra.form = Some(AS_TEXT);
+        assert_eq!(kind_label(&code), "Text");
+        assert_eq!(kind_label(&item(Kind::Text("#3b82f6".into()))), "Color");
+        assert_eq!(kind_label(&item(Kind::Text("dana@example.com".into()))), "Email");
     }
 }

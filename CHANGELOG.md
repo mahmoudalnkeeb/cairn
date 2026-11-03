@@ -2,6 +2,29 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-11-03
+
+### Added
+
+- Email attachments, and files or folders dragged straight out of a zip, can be dropped or added with Ctrl+Alt+V. They have no place on disk, so Cairn saves its own copy, keeping their names and dates.
+- A picture dragged or copied from a web page is kept as a picture, not as its address, so it still works after the page is closed.
+- A link dragged from Chrome, Edge or Firefox shows its page title, and "Copy as Markdown link" uses it. Cairn never fetches the page to find a title.
+- Text from a web page, Word or an email keeps its formatting and links, shown as "Rich text". Dragging it out or pasting it gives each app the best version it takes. "Copy as plain text" is on its right-click menu.
+- A color such as `#3b82f6`, `rgb()` or `hsl()` shows as a swatch. Right-click it to copy it as hex, RGB or HSL.
+- Code and commands show in Cascadia Mono, named by their first line. If Cairn guesses wrong, right-click for "Show as text" or "Show as code".
+- An email address or phone number gets its own tile. Double-click to start a message or a call.
+- Press Space on an item to take a closer look: a larger picture of a file, the whole text, or a color in hex, RGB and HSL, in a card beside the stack. The arrow keys move through the stack and the card follows. Space or Esc closes it.
+- Hold Alt as you start dragging items out to send another form: a file's path, an image file as a picture, text as a .txt file, a link as a .url shortcut, or several items as lines of text. The drag picture says which.
+- Notes: press Ctrl+Shift+N, or right-click a stack's name, and type a short note right in the stack. Esc or clicking away saves it, an empty note is removed, and "Edit note" on its right-click menu changes it. A note drags out as text.
+- "Rename" on a link's right-click menu, to fix a title or name a link that came without one.
+- A file moved to another folder on the same drive is found again when you open it from the stack.
+- "Find file…" on a missing file's right-click menu, to point the item at where the file is now.
+
+### Changed
+
+- A missing file's icon and name are dimmed, so it stands out from files that are still there.
+- The stack is saved in a new format. Earlier versions of Cairn can't read it, so going back to 0.5 starts with an empty stack.
+
 ## [0.5.1] - 2026-11-03
 
 ### Fixed
@@ -102,6 +125,7 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.6.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.6.0
 [0.5.1]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.5.0
 [0.4.2]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.2

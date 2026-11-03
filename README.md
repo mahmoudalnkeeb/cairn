@@ -24,11 +24,16 @@
 - Open the stack from the edge, the tray icon or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>, and drag items into any app that accepts drops: Explorer, browsers, email, chat.
 - Select several items and drag them out in one go, even files from different folders.
 - Keep separate stacks for separate jobs, shown as tabs at the top of the stack.
+- A link dragged from a browser shows its page title.
+- Cairn shows what a text holds: a color as a swatch (right-click to copy it as hex, RGB or HSL), code in a monospace font with its spacing kept, and an email address or phone number that opens a new message or call on double-click. Right-click text to show it as code, or code to show it as text.
 - Right-click items to copy their paths, copy them as Markdown links, save them as a zip, copy them to a folder or move them to another stack.
 - Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> to add whatever is on the clipboard.
 - Open a file or link with a double-click. A text item pastes into the app you came from.
+- Text from a web page, Word or an email keeps its formatting (shown as "Rich text"). Apps that only take plain text get plain text, and "Copy as plain text" is on the right-click menu.
 - Your stack stays until you remove it, including after a restart.
-- Cairn keeps references to your files and never moves them. It keeps its own copy only of images that had no file, like a screenshot, and, if you turn it on, of files from USB sticks and network drives.
+- A file moved to another folder on the same drive is found again when you open it. If Cairn can't find it, the tile says Missing: right-click it and choose "Find file…".
+- Cairn keeps references to your files and never moves them. It keeps its own copy only of things that had no file of their own, like a screenshot, an email attachment or a picture from a web page, and, if you turn it on, of files from USB sticks and network drives.
+- Drop email attachments, or files and folders straight out of a zip. Cairn saves its own copy, since they have no place on disk yet.
 - Shake the mouse while dragging to get a drop zone right next to the cursor (turn it on in the tray menu).
 - An edge tab on every monitor, or only the ones you pick. Drag the tab up or down to where you want it.
 - The edge tab hides on the monitor where a game, fullscreen video or presentation is in front.
@@ -52,12 +57,16 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Open or close the stack | Click the edge tab, left-click the tray icon, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> |
 | Select | Click, <kbd>Ctrl</kbd>+click, <kbd>Shift</kbd>+click, arrow keys, <kbd>Ctrl</kbd>+<kbd>A</kbd> |
 | Use items | Drag them out of the stack |
+| Send another form | Hold <kbd>Alt</kbd> as you start dragging: a file goes as its path, an image as a picture, text as a .txt file, a link as a .url shortcut, several items as lines of text |
 | Open or paste | Double-click or <kbd>Enter</kbd> |
+| Take a closer look | <kbd>Space</kbd> shows the item larger beside the stack; <kbd>Space</kbd> or <kbd>Esc</kbd> closes it |
 | More actions | Right-click, or the <kbd>Menu</kbd> key |
 | Add the clipboard | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>, or "Add clipboard to stack" in the tray menu |
 | Remove | <kbd>Del</kbd>, or the × on a tile |
 | Clear the stack | Tray menu, then "Clear stack" (undo within 10 seconds) |
 | New stack | The + next to the stack names, or <kbd>Ctrl</kbd>+<kbd>N</kbd> |
+| New note | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>, or right-click a stack's name. <kbd>Esc</kbd> or clicking away saves it; an empty note is removed. Right-click a note for "Edit note" |
+| Rename a link | Right-click it, then "Rename". Leave it empty to show the address again |
 | Switch stacks | Click a name, or <kbd>Ctrl</kbd>+<kbd>Tab</kbd> |
 | Drop into a particular stack | Hold the drag on the edge tab until the stack opens, point at the stack's name, and let go over the stack |
 | Rename or delete a stack | Double-click its name or press <kbd>F2</kbd> to rename; right-click it for both |
@@ -71,7 +80,7 @@ Shake to show is off by default. To notice a shake, Cairn watches mouse movement
 
 ## Your data
 
-Everything stays on your PC. The stack is saved to `%APPDATA%\Cairn`, encrypted for your Windows account. Cairn's own copies of images and drive files are kept in `%APPDATA%\Cairn\files` and deleted once no stack holds them. Cairn makes no network requests and has no account or telemetry.
+Everything stays on your PC. The stack is saved to `%APPDATA%\Cairn`, encrypted for your Windows account. Cairn's own copies of images, attachments, files from inside zips and drive files are kept in `%APPDATA%\Cairn\files` and deleted once no stack holds them. Cairn makes no network requests and has no account or telemetry.
 
 To remove Cairn, quit it from the tray menu, delete `Cairn.exe`, and delete the `%APPDATA%\Cairn` folder.
 
@@ -79,6 +88,7 @@ To remove Cairn, quit it from the tray menu, delete `Cairn.exe`, and delete the 
 
 - The idle tab can sit over part of a maximized window's scrollbar. Drag the tab along the edge or switch edges to avoid it.
 - Windows blocks dragging into or out of apps running as administrator.
+- Holding <kbd>Alt</kbd> to send another form only counts when the drag starts. Pressing it in the middle of a drag doesn't change what is sent.
 
 ## Roadmap
 

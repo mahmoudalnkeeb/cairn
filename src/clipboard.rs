@@ -32,6 +32,13 @@ pub fn write_text(owner: HWND, text: &str) -> bool {
     }
 }
 
+/// Replaces the clipboard with every format a data object holds, such as
+/// rich text with its HTML and RTF, and keeps them after Cairn lets go.
+pub fn write_object(data: &windows::Win32::System::Com::IDataObject) -> bool {
+    use windows::Win32::System::Ole::{OleFlushClipboard, OleSetClipboard};
+    unsafe { OleSetClipboard(data).is_ok() && OleFlushClipboard().is_ok() }
+}
+
 /// Sends Ctrl+V to whatever window has focus.
 pub fn send_paste() {
     let key = |vk: VIRTUAL_KEY, up: bool| INPUT {

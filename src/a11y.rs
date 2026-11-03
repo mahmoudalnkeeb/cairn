@@ -81,8 +81,8 @@ impl IAccessible_Impl for StackAccessible_Impl {
                 BSTR::from(if n == 1 { format!("{name}, 1 item") } else { format!("{name}, {n} items") })
             }
             Some(i) => {
-                let kind = &app.stack.items[i].kind;
-                BSTR::from(format!("{}, {}", shelf::name(kind), shelf::kind_label(kind)))
+                let item = &app.stack.items[i];
+                BSTR::from(format!("{}, {}", shelf::label(item), shelf::kind_label(item)))
             }
         })
     }

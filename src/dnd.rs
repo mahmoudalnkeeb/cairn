@@ -7,6 +7,8 @@ use std::path::PathBuf;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::DeleteObject;
+use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
+use windows::Win32::System::Com::StructuredStorage::StgCreateDocfile;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Memory::*;
 use windows::Win32::System::Ole::*;
@@ -16,7 +18,7 @@ use windows::Win32::UI::Shell::Common;
 use windows::Win32::UI::WindowsAndMessaging::{IDC_ARROW, LoadCursorW, SetCursor};
 use windows::core::*;
 
-use crate::shelf::{Dropped, Kind};
+use crate::shelf::{Dropped, Kind, ShelfItem};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Zone {
@@ -47,8 +49,166 @@ fn png_format() -> u16 {
     registered(w!("PNG"))
 }
 
+fn descriptor_format() -> u16 {
+    registered(w!("FileGroupDescriptorW"))
+}
+
+fn contents_format() -> u16 {
+    registered(w!("FileContents"))
+}
+
 fn supported(data: &IDataObject) -> bool {
-    has(data, CF_HDROP.0) || has(data, url_format()) || has(data, CF_UNICODETEXT.0) || has(data, png_format()) || has(data, CF_DIB.0)
+    [CF_HDROP.0, descriptor_format(), url_format(), CF_UNICODETEXT.0, png_format(), CF_DIB.0].into_iter().any(|cf| has(data, cf))
+}
+
+/// A file or folder a source offers with no path on disk, such as an email
+/// attachment or a file inside a zip.
+struct Virtual {
+    /// May hold a relative path ("folder\file.txt") for items inside a folder.
+    name: String,
+    dir: bool,
+    written: Option<FILETIME>,
+}
+
+/// The FILEGROUPDESCRIPTORW a source puts on the data object.
+fn parse_descriptors(bytes: &[u8]) -> Option<Vec<Virtual>> {
+    let count = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
+    let size = size_of::<FILEDESCRIPTORW>();
+    (0..count)
+        .map(|i| {
+            let raw = bytes.get(4 + i * size..4 + (i + 1) * size)?;
+            let d: FILEDESCRIPTORW = unsafe { std::ptr::read_unaligned(raw.as_ptr() as *const _) };
+            let (flags, attrs, units) = (d.dwFlags, d.dwFileAttributes, d.cFileName);
+            let end = units.iter().position(|&u| u == 0).unwrap_or(units.len());
+            Some(Virtual {
+                name: String::from_utf16_lossy(&units[..end]),
+                dir: flags & FD_ATTRIBUTES.0 as u32 != 0 && attrs & FILE_ATTRIBUTE_DIRECTORY.0 != 0,
+                written: (flags & FD_WRITESTIME.0 as u32 != 0).then_some(d.ftLastWriteTime),
+            })
+        })
+        .collect()
+}
+
+/// The parts of a name a source gave, safe to use as a path under Cairn's
+/// folder: no "..", no drive or root, no characters Windows refuses.
+fn safe_parts(name: &str) -> Option<Vec<String>> {
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6",
+        "LPT7", "LPT8", "LPT9",
+    ];
+    let parts: Vec<String> = name
+        .split(['\\', '/'])
+        .map(|part| {
+            let clean: String = part.chars().map(|c| if c < ' ' || "<>:\"|?*".contains(c) { '_' } else { c }).collect();
+            let clean = clean.trim().trim_end_matches('.').to_string();
+            let stem = clean.split('.').next().unwrap_or_default().to_ascii_uppercase();
+            if RESERVED.contains(&stem.as_str()) { format!("_{clean}") } else { clean }
+        })
+        .filter(|p| !p.is_empty())
+        .collect();
+    (!parts.is_empty()).then_some(parts)
+}
+
+/// Copies a stream to a file in 64 KB pieces, so large files never sit in
+/// memory whole.
+fn write_stream(stream: &IStream, target: &std::path::Path) -> Option<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(target).ok()?;
+    let mut buf = vec![0u8; 64 * 1024];
+    unsafe {
+        let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+        loop {
+            let mut read = 0u32;
+            stream.Read(buf.as_mut_ptr() as *mut _, buf.len() as u32, Some(&mut read)).ok().ok()?;
+            if read == 0 {
+                return Some(());
+            }
+            file.write_all(&buf[..read as usize]).ok()?;
+        }
+    }
+}
+
+/// Writes the contents of virtual item `index` to `target`. Sources hand it
+/// over as memory, a stream, or (Outlook messages) a structured storage.
+fn save_contents(data: &IDataObject, index: usize, target: &std::path::Path) -> Option<()> {
+    let fmt = FORMATETC {
+        cfFormat: contents_format(),
+        ptd: std::ptr::null_mut(),
+        dwAspect: DVASPECT_CONTENT.0,
+        lindex: index as i32,
+        tymed: (TYMED_HGLOBAL.0 | TYMED_ISTREAM.0 | TYMED_ISTORAGE.0) as u32,
+    };
+    unsafe {
+        let mut medium = data.GetData(&fmt).ok()?;
+        let saved = match TYMED(medium.tymed as i32) {
+            TYMED_ISTREAM => medium.u.pstm.as_ref().and_then(|s| write_stream(s, target)),
+            TYMED_ISTORAGE => medium.u.pstg.as_ref().and_then(|src| {
+                let dest = StgCreateDocfile(&HSTRING::from(target.as_os_str()), STGM_CREATE | STGM_READWRITE | STGM_SHARE_EXCLUSIVE, 0).ok()?;
+                src.CopyTo(None, None, &dest).ok()?;
+                dest.Commit(0).ok()
+            }),
+            TYMED_HGLOBAL => {
+                let global = medium.u.hGlobal;
+                let ptr = GlobalLock(global) as *const u8;
+                let ok = !ptr.is_null() && std::fs::write(target, std::slice::from_raw_parts(ptr, GlobalSize(global))).is_ok();
+                let _ = GlobalUnlock(global);
+                ok.then_some(())
+            }
+            _ => None,
+        };
+        ReleaseStgMedium(&mut medium);
+        saved
+    }
+}
+
+/// FILETIME (100 ns steps since 1601) as a SystemTime.
+fn system_time(ft: FILETIME) -> Option<std::time::SystemTime> {
+    let ticks = ((ft.dwHighDateTime as u64) << 32 | ft.dwLowDateTime as u64).checked_sub(116_444_736_000_000_000)?;
+    std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_nanos(ticks.checked_mul(100)?))
+}
+
+/// Saves the files and folders a source offers without paths into Cairn's
+/// folder and returns the top-level ones. None when there are none, or when
+/// they are only link shortcuts (browsers offer a .url file with every
+/// dragged link), so the link itself is kept instead.
+fn read_virtual(data: &IDataObject) -> Option<Vec<PathBuf>> {
+    let items = parse_descriptors(&read_bytes(data, descriptor_format())?)?;
+    if items.iter().all(|v| v.name.to_ascii_lowercase().ends_with(".url")) {
+        return None;
+    }
+    let dir = crate::shelf::owned_dir()?;
+    // Each top-level name, and where it was saved.
+    let mut tops: Vec<(String, PathBuf)> = Vec::new();
+    for (i, v) in items.iter().enumerate() {
+        let Some(parts) = safe_parts(&v.name) else { continue };
+        let top = match tops.iter().find(|(n, _)| *n == parts[0]) {
+            Some((_, p)) => p.clone(),
+            None => {
+                let p = crate::shelf::free_path(&dir, &parts[0]);
+                tops.push((parts[0].clone(), p.clone()));
+                p
+            }
+        };
+        let target = parts[1..].iter().fold(top, |p, part| p.join(part));
+        if v.dir {
+            let _ = std::fs::create_dir_all(&target);
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if save_contents(data, i, &target).is_none() {
+            let _ = std::fs::remove_file(&target);
+            continue;
+        }
+        if let Some(t) = v.written.and_then(system_time)
+            && let Ok(f) = std::fs::File::options().write(true).open(&target)
+        {
+            let _ = f.set_modified(t);
+        }
+    }
+    let saved: Vec<PathBuf> = tops.into_iter().map(|(_, p)| p).filter(|p| p.exists()).collect();
+    (!saved.is_empty()).then_some(saved)
 }
 
 fn read_bytes(data: &IDataObject, cf: u16) -> Option<Vec<u8>> {
@@ -121,16 +281,73 @@ fn read_paths(data: &IDataObject) -> Option<Vec<PathBuf>> {
     }
 }
 
-/// Files first, then a link, then plain text, then an image. Images come
-/// last because apps like Excel offer a picture of copied cells next to the
-/// text.
+/// Files first, then files with no path (saved into Cairn), then a link,
+/// then plain text, then an image. Images come last because apps like Excel
+/// offer a picture of copied cells next to the text.
 pub fn read(data: &IDataObject) -> Option<Dropped> {
     if has(data, CF_HDROP.0) {
         return read_paths(data).map(Dropped::Paths);
     }
+    if has(data, descriptor_format())
+        && let Some(paths) = read_virtual(data)
+    {
+        return Some(Dropped::Paths(paths));
+    }
     if let Some(text) = read_utf16(data, url_format()).or_else(|| read_utf16(data, CF_UNICODETEXT.0)) {
+        // An image copied or dragged from a browser comes with its address.
+        // Keep the picture: the address may stop working once the page closes.
+        if crate::shelf::looks_like_link(&text)
+            && let Some(image) = read_image(data)
+        {
+            return Some(image);
+        }
+        if crate::shelf::looks_like_link(&text)
+            && let Some(title) = link_title(data)
+        {
+            return Some(Dropped::Link { url: text, title });
+        }
+        let (html, rtf) = (read_until_nul(data, html_format()), read_until_nul(data, rtf_format()));
+        if html.is_some() || rtf.is_some() {
+            return Some(Dropped::Rich { text, html, rtf });
+        }
         return Some(Dropped::Text(text));
     }
+    read_image(data)
+}
+
+fn html_format() -> u16 {
+    registered(w!("HTML Format"))
+}
+
+fn rtf_format() -> u16 {
+    registered(w!("Rich Text Format"))
+}
+
+/// A format holding 8-bit text, without the end marker and the padding
+/// after it.
+fn read_until_nul(data: &IDataObject, cf: u16) -> Option<Vec<u8>> {
+    let mut bytes = read_bytes(data, cf)?;
+    bytes.truncate(bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len()));
+    (!bytes.is_empty()).then_some(bytes)
+}
+
+/// The page title a browser sends with a dragged link: Firefox as the second
+/// line of "text/x-moz-url", Chrome and Edge as the name of the .url file
+/// they offer alongside it.
+fn link_title(data: &IDataObject) -> Option<String> {
+    let moz = read_utf16(data, registered(w!("text/x-moz-url")));
+    let from_moz = moz.as_deref().and_then(|m| m.split_once('\n')).map(|(_, t)| t.trim().to_string());
+    let from_file = || match &parse_descriptors(&read_bytes(data, descriptor_format())?)?[..] {
+        [one] => {
+            let n = one.name.len().checked_sub(4)?;
+            one.name[n..].eq_ignore_ascii_case(".url").then(|| one.name[..n].trim().to_string())
+        }
+        _ => None,
+    };
+    from_moz.filter(|t| !t.is_empty()).or_else(from_file).filter(|t| !t.is_empty())
+}
+
+fn read_image(data: &IDataObject) -> Option<Dropped> {
     if let Some(png) = read_bytes(data, png_format()) {
         return Some(Dropped::Image { bytes: png, ext: "png" });
     }
@@ -351,10 +568,11 @@ fn set_global(obj: &IDataObject, cf: u16, bytes: &[u8]) -> Option<()> {
 }
 
 /// A data object other apps understand: the shell's own for files, plain
-/// text (plus a URL format for links) otherwise.
-pub fn data_object(kind: &Kind) -> Option<IDataObject> {
+/// text (plus a URL format for links, and the formatted versions of rich
+/// text, so each app takes the best one it can use) otherwise.
+pub fn data_object(item: &ShelfItem) -> Option<IDataObject> {
     unsafe {
-        match kind {
+        match &item.kind {
             Kind::File(p) => {
                 let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(p.to_string_lossy().as_ref()), None).ok()?;
                 item.BindToHandler(None, &BHID_DataObject).ok()
@@ -362,6 +580,11 @@ pub fn data_object(kind: &Kind) -> Option<IDataObject> {
             Kind::Text(t) => {
                 let obj: IDataObject = SHCreateDataObject(None, None, None).ok()?;
                 set_utf16(&obj, CF_UNICODETEXT.0, t)?;
+                for (cf, bytes) in [(html_format(), &item.extra.html), (rtf_format(), &item.extra.rtf)] {
+                    if let Some(b) = bytes {
+                        set_global(&obj, cf, &[b.as_slice(), &[0]].concat())?;
+                    }
+                }
                 Some(obj)
             }
             Kind::Link(l) => {
@@ -374,13 +597,120 @@ pub fn data_object(kind: &Kind) -> Option<IDataObject> {
     }
 }
 
+/// Plain text as a data object.
+fn text_object(text: &str) -> Option<IDataObject> {
+    let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None).ok()? };
+    set_utf16(&obj, CF_UNICODETEXT.0, text)?;
+    Some(obj)
+}
+
+/// What a drag out sends when Alt is held as it starts, and the words shown
+/// under the drag image: a file's path (or an image file's picture), text
+/// as a .txt file, a link as a .url shortcut, several items as lines of text.
+pub fn data_object_alt(items: &[&ShelfItem]) -> Option<(IDataObject, &'static str)> {
+    let one = match items {
+        [one] => one,
+        _ => {
+            let lines: Vec<String> = items
+                .iter()
+                .map(|i| match &i.kind {
+                    Kind::File(p) => p.to_string_lossy().into_owned(),
+                    Kind::Text(t) | Kind::Link(t) => t.clone(),
+                })
+                .collect();
+            return Some((text_object(&lines.join("\r\n"))?, "As text"));
+        }
+    };
+    let file = |path: PathBuf| data_object(&ShelfItem { id: 0, kind: Kind::File(path), icon: None, extra: Default::default() });
+    match &one.kind {
+        Kind::File(p) => match picture(p) {
+            Some(obj) => Some((obj, "As picture")),
+            None => Some((text_object(&p.to_string_lossy())?, "As path")),
+        },
+        Kind::Text(t) => {
+            let name = t.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Text");
+            let body = [&b"\xEF\xBB\xBF"[..], t.replace("\r\n", "\n").replace('\n', "\r\n").as_bytes()].concat();
+            Some((file(write_out(&out_dir()?, name, "txt", &body)?)?, "As file"))
+        }
+        Kind::Link(l) => {
+            let url = if l.starts_with("www.") { format!("https://{l}") } else { l.clone() };
+            let name = crate::shelf::label(one);
+            Some((file(write_out(&out_dir()?, &name, "url", format!("[InternetShortcut]\r\nURL={url}\r\n").as_bytes())?)?, "As shortcut"))
+        }
+    }
+}
+
+/// Where files made for a drag out go. Cairn deletes the folder at its
+/// next start, like any copy no item holds.
+fn out_dir() -> Option<PathBuf> {
+    Some(crate::shelf::owned_dir()?.join("out"))
+}
+
+/// Writes a file for a drag out into `dir`, named from `name`.
+fn write_out(dir: &std::path::Path, name: &str, ext: &str, bytes: &[u8]) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let stem: String = safe_parts(name).map(|p| p.join(" ")).unwrap_or_else(|| "Item".into()).chars().take(60).collect();
+    let path = crate::shelf::free_path(dir, &format!("{}.{ext}", stem.trim_end_matches('.')));
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
+}
+
+/// An image file as picture data, for apps that take a pasted picture but
+/// not a file: CF_DIB always, and the file itself as "PNG" when it is one.
+fn picture(path: &std::path::Path) -> Option<IDataObject> {
+    let dib = dib_from_image(path)?;
+    let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None).ok()? };
+    set_global(&obj, CF_DIB.0, &dib)?;
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png"))
+        && let Ok(png) = std::fs::read(path)
+    {
+        set_global(&obj, png_format(), &png)?;
+    }
+    Some(obj)
+}
+
+/// Decodes an image file with Windows' own codecs into a bottom-up 32-bit
+/// DIB. None for files that are not images, and for very large ones.
+fn dib_from_image(path: &std::path::Path) -> Option<Vec<u8>> {
+    use windows::Win32::Graphics::Imaging::*;
+    unsafe {
+        let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
+        let decoder = wic.CreateDecoderFromFilename(&HSTRING::from(path.as_os_str()), None, GENERIC_READ, WICDecodeMetadataCacheOnDemand).ok()?;
+        let frame = decoder.GetFrame(0).ok()?;
+        let bgra = wic.CreateFormatConverter().ok()?;
+        bgra.Initialize(&frame, &GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeCustom).ok()?;
+        let (mut w, mut h) = (0u32, 0u32);
+        bgra.GetSize(&mut w, &mut h).ok()?;
+        if w == 0 || h == 0 || w as u64 * h as u64 > 50_000_000 {
+            return None;
+        }
+        let stride = w * 4;
+        let mut pixels = vec![0u8; (stride * h) as usize];
+        bgra.CopyPixels(std::ptr::null(), stride, &mut pixels).ok()?;
+        let mut out = Vec::with_capacity(40 + pixels.len());
+        for v in [40u32, w, h] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&32u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&(pixels.len() as u32).to_le_bytes());
+        out.extend_from_slice(&[0; 16]);
+        for row in pixels.chunks(stride as usize).rev() {
+            out.extend_from_slice(row);
+        }
+        Some(out)
+    }
+}
+
 /// One data object for several items. Files win: if any are selected, only
 /// the files go, as one shell item array, so Explorer and mail clients see a
 /// normal multi-file drag. Otherwise texts and links go as lines of text.
-pub fn data_object_many(kinds: &[&Kind]) -> Option<IDataObject> {
-    if let [one] = kinds {
+pub fn data_object_many(items: &[&ShelfItem]) -> Option<IDataObject> {
+    if let [one] = items {
         return data_object(one);
     }
+    let kinds: Vec<&Kind> = items.iter().map(|i| &i.kind).collect();
     let paths: Vec<&PathBuf> = kinds.iter().filter_map(|k| if let Kind::File(p) = k { Some(p) } else { None }).collect();
     if paths.is_empty() {
         let lines: Vec<&str> = kinds
@@ -414,7 +744,10 @@ pub fn data_object_many(kinds: &[&Kind]) -> Option<IDataObject> {
 /// Runs the modal drag loop with `image` under the cursor. Callers must not
 /// hold app state across it, since window messages keep flowing while it
 /// runs. The shell owns the image's bitmap once it takes it.
-pub fn drag_out(data: &IDataObject, image: Option<SHDRAGIMAGE>) -> DROPEFFECT {
+/// `link` allows the target to make a shortcut. Drags with Alt held turn it
+/// off: Explorer reads Alt as "make a shortcut", which would point at the
+/// temporary file instead of copying it.
+pub fn drag_out(data: &IDataObject, image: Option<SHDRAGIMAGE>, link: bool) -> DROPEFFECT {
     if let Some(img) = image {
         let helper: Option<IDragSourceHelper2> = unsafe { CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok() };
         let taken = helper.is_some_and(|h| unsafe {
@@ -430,7 +763,8 @@ pub fn drag_out(data: &IDataObject, image: Option<SHDRAGIMAGE>) -> DROPEFFECT {
     let source: IDropSource = DropSource { data: data.clone() }.into();
     let mut effect = DROPEFFECT_NONE;
     unsafe {
-        let _ = DoDragDrop(data, &source, DROPEFFECT_COPY | DROPEFFECT_LINK, &mut effect);
+        let allowed = if link { DROPEFFECT_COPY | DROPEFFECT_LINK } else { DROPEFFECT_COPY };
+        let _ = DoDragDrop(data, &source, allowed, &mut effect);
     }
     effect
 }
@@ -449,9 +783,9 @@ mod tests {
         let (a, b) = (dir.join("a.txt"), dir.join("sub").join("b.txt"));
         std::fs::write(&a, "a").unwrap();
         std::fs::write(&b, "b").unwrap();
-        let note = Kind::Text("skipped when files are present".into());
-        let missing = Kind::File(dir.join("gone.txt"));
-        let (ka, kb) = (Kind::File(a.clone()), Kind::File(b.clone()));
+        let note = item(Kind::Text("skipped when files are present".into()));
+        let missing = item(Kind::File(dir.join("gone.txt")));
+        let (ka, kb) = (item(Kind::File(a.clone())), item(Kind::File(b.clone())));
         let obj = data_object_many(&[&ka, &note, &missing, &kb]).expect("data object");
         let Some(Dropped::Paths(paths)) = read(&obj) else { panic!("no file drop") };
         // The shell gives back long names, and TEMP can be a short 8.3 path (as on CI runners).
@@ -461,9 +795,159 @@ mod tests {
 
     #[test]
     fn several_texts_drag_out_as_lines() {
-        let (t, l) = (Kind::Text("one".into()), Kind::Link("https://example.com".into()));
+        let (t, l) = (item(Kind::Text("one".into())), item(Kind::Link("https://example.com".into())));
         let obj = data_object_many(&[&t, &l]).expect("data object");
         assert!(matches!(read(&obj), Some(Dropped::Text(s)) if s == "one\r\nhttps://example.com"));
+    }
+
+    fn item(kind: Kind) -> ShelfItem {
+        ShelfItem { id: 0, kind, icon: None, extra: Default::default() }
+    }
+
+    #[test]
+    fn alt_sends_paths_pictures_and_lines() {
+        unsafe {
+            let _ = OleInitialize(None);
+        }
+        let dir = std::env::temp_dir().join("cairn-alt-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A file that is not an image goes as its path.
+        let doc = dir.join("notes.md");
+        std::fs::write(&doc, "# notes").unwrap();
+        let (obj, form) = data_object_alt(&[&item(Kind::File(doc.clone()))]).unwrap();
+        assert_eq!((read_utf16(&obj, CF_UNICODETEXT.0).unwrap(), form), (doc.to_string_lossy().into_owned(), "As path"));
+        // An image file goes as a picture: a 2×1 bitmap comes back as a 32-bit DIB.
+        let mut dib = Vec::new();
+        for v in [40u32, 2, 1] {
+            dib.extend_from_slice(&v.to_le_bytes());
+        }
+        dib.extend_from_slice(&1u16.to_le_bytes());
+        dib.extend_from_slice(&24u16.to_le_bytes());
+        dib.extend_from_slice(&[0; 24]);
+        dib.extend_from_slice(&[255, 0, 0, 0, 255, 0, 0, 0]);
+        let bmp = dir.join("two.bmp");
+        std::fs::write(&bmp, bmp_from_dib(&dib).unwrap()).unwrap();
+        let (obj, form) = data_object_alt(&[&item(Kind::File(bmp))]).unwrap();
+        let out = read_bytes(&obj, CF_DIB.0).unwrap();
+        assert_eq!(form, "As picture");
+        assert_eq!((u32::from_le_bytes(out[4..8].try_into().unwrap()), u16::from_le_bytes(out[14..16].try_into().unwrap())), (2, 32));
+        // Several items go as lines.
+        let (t, l) = (item(Kind::Text("one".into())), item(Kind::Link("https://e.com".into())));
+        let (obj, form) = data_object_alt(&[&t, &l]).unwrap();
+        assert_eq!((read_utf16(&obj, CF_UNICODETEXT.0).unwrap().as_str(), form), ("one\r\nhttps://e.com", "As text"));
+    }
+
+    #[test]
+    fn files_for_a_drag_out_get_safe_free_names() {
+        let dir = std::env::temp_dir().join("cairn-out-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = write_out(&dir, "Meeting: 4pm?", "txt", b"x").unwrap();
+        let b = write_out(&dir, "Meeting: 4pm?", "txt", b"y").unwrap();
+        assert_eq!(a.file_name().unwrap(), "Meeting_ 4pm_.txt");
+        assert_eq!(b.file_name().unwrap(), "Meeting_ 4pm_ (2).txt");
+        assert_eq!(write_out(&dir, "..", "url", b"z").unwrap().file_name().unwrap(), "Item.url");
+    }
+
+    #[test]
+    fn rich_text_keeps_its_formats_in_and_out() {
+        let html = b"Version:0.9\r\nStartHTML:0000000097\r\nEndHTML:0000000135\r\nStartFragment:0000000097\r\nEndFragment:0000000135\r\n<b>bold</b> and plain";
+        let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None) }.unwrap();
+        set_utf16(&obj, CF_UNICODETEXT.0, "bold and plain").unwrap();
+        // Sources pad the memory after the end marker.
+        set_global(&obj, html_format(), &[&html[..], b"\0\0junk"].concat()).unwrap();
+        let Some(Dropped::Rich { text, html: Some(h), rtf: None }) = read(&obj) else { panic!("not rich") };
+        assert_eq!((text.as_str(), h.as_slice()), ("bold and plain", &html[..]));
+        let mut kept = item(Kind::Text(text));
+        kept.extra.html = Some(h);
+        kept.extra.rtf = Some(b"{\\rtf1 \\b bold\\b0  and plain}".to_vec());
+        let back = data_object(&kept).unwrap();
+        assert_eq!(read_until_nul(&back, html_format()).unwrap(), html);
+        assert_eq!(read_until_nul(&back, rtf_format()).unwrap(), b"{\\rtf1 \\b bold\\b0  and plain}");
+        assert_eq!(read_utf16(&back, CF_UNICODETEXT.0).unwrap(), "bold and plain");
+    }
+
+    #[test]
+    fn a_browser_image_keeps_the_picture_not_its_address() {
+        let with = |text: &str| {
+            let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None) }.unwrap();
+            set_utf16(&obj, CF_UNICODETEXT.0, text).unwrap();
+            set_global(&obj, png_format(), b"\x89PNG fake").unwrap();
+            read(&obj)
+        };
+        assert!(matches!(with("https://example.com/cat.png"), Some(Dropped::Image { ext: "png", .. })));
+        // Copied cells from Excel come with a picture too; the text wins.
+        assert!(matches!(with("Q3\t1200"), Some(Dropped::Text(t)) if t == "Q3\t1200"));
+    }
+
+    /// One FILEDESCRIPTORW as bytes.
+    fn entry(name: &str, flags: u32, attrs: u32) -> Vec<u8> {
+        let mut d: FILEDESCRIPTORW = unsafe { std::mem::zeroed() };
+        d.dwFlags = flags;
+        d.dwFileAttributes = attrs;
+        d.ftLastWriteTime = FILETIME { dwLowDateTime: 1, dwHighDateTime: 2 };
+        let mut units = [0u16; 260];
+        for (u, c) in units.iter_mut().zip(name.encode_utf16()) {
+            *u = c;
+        }
+        d.cFileName = units;
+        unsafe { std::slice::from_raw_parts(&d as *const _ as *const u8, size_of::<FILEDESCRIPTORW>()) }.to_vec()
+    }
+
+    #[test]
+    fn dragged_links_keep_their_page_title() {
+        let link = |extra: &dyn Fn(&IDataObject)| {
+            let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None) }.unwrap();
+            set_utf16(&obj, url_format(), "https://example.com/notes").unwrap();
+            extra(&obj);
+            read(&obj)
+        };
+        // Firefox.
+        let firefox = link(&|o| set_utf16(o, registered(w!("text/x-moz-url")), "https://example.com/notes\nRelease notes").unwrap());
+        assert!(matches!(firefox, Some(Dropped::Link { title, .. }) if title == "Release notes"));
+        // Chrome and Edge offer the link as "<title>.url"; it stays a link.
+        let chrome = link(&|o| {
+            let mut bytes = 1u32.to_le_bytes().to_vec();
+            bytes.extend(entry("Release notes.url", 0, 0));
+            set_global(o, descriptor_format(), &bytes).unwrap();
+        });
+        assert!(matches!(chrome, Some(Dropped::Link { url, title }) if title == "Release notes" && url == "https://example.com/notes"));
+        assert!(matches!(link(&|_| {}), Some(Dropped::Text(_))));
+    }
+
+    #[test]
+    fn reads_file_descriptors() {
+        let mut bytes = 2u32.to_le_bytes().to_vec();
+        bytes.extend(entry("Photos", FD_ATTRIBUTES.0 as u32, FILE_ATTRIBUTE_DIRECTORY.0));
+        bytes.extend(entry("Photos\\ü.jpg", FD_WRITESTIME.0 as u32, 0));
+        let items = parse_descriptors(&bytes).unwrap();
+        assert_eq!((items[0].name.as_str(), items[0].dir), ("Photos", true));
+        assert_eq!((items[1].name.as_str(), items[1].dir), ("Photos\\ü.jpg", false));
+        assert!(items[0].written.is_none() && items[1].written.is_some());
+        // A count larger than the data is refused.
+        bytes[0] = 3;
+        assert!(parse_descriptors(&bytes).is_none());
+    }
+
+    #[test]
+    fn names_from_sources_stay_inside_cairns_folder() {
+        assert_eq!(safe_parts("a\\b/c.txt").unwrap(), ["a", "b", "c.txt"]);
+        assert_eq!(safe_parts("..\\..\\Windows\\x.dll").unwrap(), ["Windows", "x.dll"]);
+        assert_eq!(safe_parts("C:\\x").unwrap(), ["C_", "x"]);
+        assert_eq!(safe_parts("re: why?.msg").unwrap(), ["re_ why_.msg"]);
+        assert_eq!(safe_parts("con.txt").unwrap(), ["_con.txt"]);
+        assert!(safe_parts("\\..\\.").is_none());
+    }
+
+    #[test]
+    fn streams_are_copied_to_files() {
+        let dir = std::env::temp_dir().join("cairn-stream-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let data: Vec<u8> = (0..200_000u32).map(|i| i as u8).collect();
+        let stream = unsafe { SHCreateMemStream(Some(&data)) }.unwrap();
+        let target = dir.join("big.bin");
+        write_stream(&stream, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), data);
     }
 
     #[test]
@@ -488,3 +972,4 @@ mod tests {
         assert_eq!(u32::from_le_bytes(bmp_from_dib(&dib).unwrap()[10..14].try_into().unwrap()), 54 + 1024);
     }
 }
+

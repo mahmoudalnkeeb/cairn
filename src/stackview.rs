@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::DirectWrite::*;
+use windows::Win32::System::Com::IDataObject;
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -13,11 +14,12 @@ use windows::Win32::UI::Shell::{SHDRAGIMAGE, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
-use crate::gfx::{Gfx, Painter, Surface, Theme, Tween};
+use crate::detect::{self, Form};
+use crate::gfx::{Color, Gfx, Painter, Surface, Theme, Tween};
 use crate::select::Selection;
 use crate::shelf::{self, Kind, ShelfItem};
 use crate::settings::Edge;
-use crate::{App, a11y, actions, clipboard, dnd, dpi_at, edgetab};
+use crate::{App, a11y, actions, clipboard, dnd, dpi_at, edgetab, peek};
 
 const COLS: usize = 4;
 const ROWS: usize = 3;
@@ -49,6 +51,10 @@ const ANIM_TIMER: usize = 1;
 const GLYPH_TEXT: &str = "\u{E8A5}";
 const GLYPH_LINK: &str = "\u{E71B}";
 const GLYPH_MISSING: &str = "\u{E7BA}";
+const GLYPH_CODE: &str = "\u{E943}";
+const GLYPH_MAIL: &str = "\u{E715}";
+const GLYPH_PHONE: &str = "\u{E717}";
+const GLYPH_NOTE: &str = "\u{E70B}";
 const GLYPH_ADD: &str = "\u{E710}";
 const GLYPH_REMOVE: &str = "\u{E711}";
 
@@ -80,6 +86,8 @@ pub struct StackView {
     /// The current stack's name while it is being renamed. `fresh` means the
     /// first key typed replaces it.
     editing: Option<(String, bool)>,
+    /// A note or a link's name being typed, in a box over the grid.
+    tile_edit: Option<TileEdit>,
     /// 0 hidden, 1 open: fades the card in and slides it from the tab.
     show: Tween,
     /// The drop-hover tint.
@@ -93,6 +101,16 @@ pub struct StackView {
     lifted: Vec<u64>,
     lift: Tween,
 }
+
+struct TileEdit {
+    id: u64,
+    text: String,
+    /// A note takes several lines and saves on Esc. A link's name is one
+    /// line: Enter saves, Esc cancels.
+    note: bool,
+}
+
+const NOTE_MAX: usize = 10_000;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Head {
@@ -112,11 +130,19 @@ const A_COPY_MD: u32 = 3;
 const A_ZIP: u32 = 4;
 const A_COPY_TO: u32 = 5;
 const A_REMOVE: u32 = 6;
+const A_FIND: u32 = 7;
+const A_COPY_PLAIN: u32 = 8;
+const A_COPY_HEX: u32 = 9;
+const A_COPY_RGB: u32 = 10;
+const A_COPY_HSL: u32 = 11;
+const A_SHOW_AS: u32 = 12;
+const A_EDIT: u32 = 13;
 const A_MOVE_BASE: u32 = 100;
 // Stack tab menu.
 const H_RENAME: u32 = 1;
 const H_DELETE: u32 = 2;
 const H_NEW: u32 = 3;
+const H_NOTE: u32 = 4;
 
 impl StackView {
     pub fn new(hwnd: HWND) -> StackView {
@@ -141,6 +167,7 @@ impl StackView {
             add_x: 0.0,
             last_head_click: None,
             editing: None,
+            tile_edit: None,
             show: Tween::new(0.0),
             drop_t: Tween::new(0.0),
             flash: Tween::new(0.0),
@@ -153,12 +180,13 @@ impl StackView {
 }
 
 /// A transition's length, or none when Windows animations are off.
-fn ms(app: &App, ms: f32) -> f32 {
+pub fn ms(app: &App, ms: f32) -> f32 {
     if app.animations { ms } else { 0.0 }
 }
 
-/// Runs the animation timer until every transition has finished.
-fn animate(app: &mut App) {
+/// Runs the animation timer until every transition has finished. It also
+/// drives the peek card.
+pub fn animate(app: &mut App) {
     if app.animations {
         unsafe {
             SetTimer(app.stack_view.hwnd, ANIM_TIMER, 10, None);
@@ -169,6 +197,8 @@ fn animate(app: &mut App) {
 
 fn tick(app: &mut App) {
     render(app);
+    peek::tick(app);
+    let peek_done = app.peek.show.done();
     let v = &mut app.stack_view;
     if v.settle.done() {
         v.fresh.clear();
@@ -177,7 +207,7 @@ fn tick(app: &mut App) {
         v.lifted.clear();
     }
     let all = [v.show, v.drop_t, v.flash, v.settle, v.lift];
-    if all.iter().all(Tween::done) {
+    if all.iter().all(Tween::done) && peek_done {
         unsafe {
             let _ = KillTimer(v.hwnd, ANIM_TIMER);
         }
@@ -219,6 +249,7 @@ struct Fonts {
     caption: Option<IDWriteTextFormat>,
     icon32: Option<IDWriteTextFormat>,
     icon12: Option<IDWriteTextFormat>,
+    code: Option<IDWriteTextFormat>,
 }
 
 fn fonts(g: &Gfx) -> Fonts {
@@ -228,6 +259,7 @@ fn fonts(g: &Gfx) -> Fonts {
         caption: fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL),
         icon32: fmt(&g.icon_font, 28.0, DWRITE_FONT_WEIGHT_NORMAL),
         icon12: fmt(&g.icon_font, 10.0, DWRITE_FONT_WEIGHT_NORMAL),
+        code: fmt(&g.code_font, 13.0, DWRITE_FONT_WEIGHT_NORMAL),
     }
 }
 
@@ -248,41 +280,81 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
     if look.focused {
         p.stroke_rounded(tx + 0.5, ty + 0.5, TILE_W - 1.0, TILE_H - 1.0, 8.0, 1.0, t.primary);
     }
-    match item.icon.as_ref().and_then(|i| i.as_ref()) {
-        Some(icon) => {
-            let scale = (32.0 / icon.w.max(icon.h) as f32).min(1.0);
-            let (iw, ih) = (icon.w as f32 * scale, icon.h as f32 * scale);
-            p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
-        }
-        None => {
-            let glyph = match &item.kind {
-                Kind::File(_) => GLYPH_MISSING,
-                Kind::Text(_) => GLYPH_TEXT,
-                Kind::Link(_) => GLYPH_LINK,
-            };
-            if let Some(fm) = &f.icon32 {
-                p.text(glyph, fm, tx, ty + 8.0, TILE_W, 36.0, t.text);
+    // A missing file's icon and name are dimmed; its "Missing" label is not,
+    // so it stays readable.
+    let missing = matches!(&item.kind, Kind::File(p) if !p.exists());
+    let form = shelf::form(item);
+    p.layer(if missing { 0.5 } else { 1.0 }, 0.0, 0.0, |p| {
+        match item.icon.as_ref().and_then(|i| i.as_ref()) {
+            Some(icon) => {
+                let scale = (32.0 / icon.w.max(icon.h) as f32).min(1.0);
+                let (iw, ih) = (icon.w as f32 * scale, icon.h as f32 * scale);
+                p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
             }
+            None => match form {
+                Some(Form::Color(c)) => swatch(p, t, tx + (TILE_W - SWATCH) / 2.0, ty + 12.0, SWATCH, c),
+                _ => {
+                    let glyph = match (&item.kind, form) {
+                        (Kind::File(_), _) => GLYPH_MISSING,
+                        (Kind::Link(_), _) => GLYPH_LINK,
+                        _ if item.extra.note => GLYPH_NOTE,
+                        (_, Some(Form::Code)) => GLYPH_CODE,
+                        (_, Some(Form::Email)) => GLYPH_MAIL,
+                        (_, Some(Form::Phone)) => GLYPH_PHONE,
+                        _ => GLYPH_TEXT,
+                    };
+                    if let Some(fm) = &f.icon32 {
+                        p.text(glyph, fm, tx, ty + 8.0, TILE_W, 36.0, t.text);
+                    }
+                }
+            },
         }
-    }
-    if let Some(fm) = &f.name {
-        p.text(&shelf::name(&item.kind), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
-    }
+        // Colors and code read best in the code font, as they were typed.
+        let font = if matches!(form, Some(Form::Code | Form::Color(_))) { &f.code } else { &f.name };
+        if let Some(fm) = font {
+            p.text(&shelf::label(item), fm, tx + 6.0, ty + 46.0, TILE_W - 12.0, 20.0, t.text);
+        }
+    });
     if let Some(fm) = &f.caption {
-        p.text(shelf::kind_label(&item.kind), fm, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
+        p.text(shelf::kind_label(item), fm, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
     }
 }
 
+const SWATCH: f32 = 28.0;
+
+/// A color item's tile picture: the color in a small rounded square, over a
+/// checkerboard when it is see-through, with an outline so a color close to
+/// the tile still shows.
+pub fn swatch(p: &Painter, t: &Theme, x: f32, y: f32, size: f32, [r, g, b, a]: [u8; 4]) {
+    const CELL: f32 = SWATCH / 4.0;
+    if a < 255 {
+        let n = (size / CELL).ceil() as usize;
+        for i in 0..n {
+            for j in 0..n {
+                let c = if (i + j) % 2 == 0 { t.surface_sunken } else { t.surface };
+                let (cx, cy) = (i as f32 * CELL, j as f32 * CELL);
+                p.fill_rect(x + cx, y + cy, CELL.min(size - cx), CELL.min(size - cy), c);
+            }
+        }
+    }
+    let color = Color(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0);
+    p.fill_rounded(x, y, size, size, 4.0, color);
+    p.stroke_rounded(x + 0.5, y + 0.5, size - 1.0, size - 1.0, 4.0, 1.0, t.outline);
+}
+
 /// What a drag out shows under the cursor: the grabbed tile, the rest of
-/// the selection stacked behind it, and a count when there are several.
-fn drag_image(app: &App, index: usize, count: usize, grab: POINT) -> Option<SHDRAGIMAGE> {
+/// the selection stacked behind it, a count when there are several, and
+/// what is being sent ("As path") when Alt changed it.
+fn drag_image(app: &App, index: usize, count: usize, grab: POINT, form: Option<&str>) -> Option<SHDRAGIMAGE> {
     const X: f32 = 6.0;
     const Y: f32 = 14.0;
+    const FORM_H: f32 = 20.0;
     let item = app.stack.items.get(index)?;
     let rect = tile_screen_rect(app, index)?;
     let dpi = app.stack_view.dpi;
     let s = dpi as f32 / 96.0;
-    let (w, h) = (((X + TILE_W + 22.0) * s).ceil() as i32, ((Y + TILE_H + 8.0) * s).ceil() as i32);
+    let below = if form.is_some() { FORM_H + 4.0 } else { 0.0 };
+    let (w, h) = (((X + TILE_W + 22.0) * s).ceil() as i32, ((Y + TILE_H + 8.0 + below) * s).ceil() as i32);
     let surf = Surface::new(&app.gfx, w, h).ok()?;
     let (g, t, f) = (&app.gfx, &app.theme, fonts(&app.gfx));
     let badge = g.text_format_aligned(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER).ok();
@@ -303,6 +375,12 @@ fn drag_image(app: &App, index: usize, count: usize, grab: POINT) -> Option<SHDR
             let (bx, by) = (X + TILE_W + 2.0 - bw / 2.0, Y - 10.0);
             p.fill_rounded(bx, by, bw, 20.0, 10.0, t.primary);
             p.text(&label, fm, bx, by, bw, 20.0, t.surface);
+        }
+        if let (Some(words), Some(fm)) = (form, &f.caption) {
+            let y = Y + TILE_H + 4.0;
+            p.fill_rounded(X, y, TILE_W, FORM_H, FORM_H / 2.0, t.surface);
+            p.stroke_rounded(X + 0.5, y + 0.5, TILE_W - 1.0, FORM_H - 1.0, FORM_H / 2.0, 1.0, t.outline);
+            p.text(words, fm, X, y, TILE_W, FORM_H, t.text);
         }
     })
     .ok()?;
@@ -408,6 +486,10 @@ pub fn render(app: &mut App) {
     let f = fonts(g);
     let caption_lead = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
     let caption_end = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
+    // Wrapped body text from the top left, for the note editor.
+    let edit_fmt = fmt(&g.ui_font, 14.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING).filter(|f| unsafe {
+        f.SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP).is_ok() && f.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR).is_ok()
+    });
     let items = &app.stack.items;
     let (drop_t, flash, settle, lift) = (v.drop_t.value(), v.flash.value(), v.settle.value(), v.lift.value());
 
@@ -495,9 +577,24 @@ pub fn render(app: &mut App) {
             let top = (GRID_H - thumb) * v.scroll as f32 / (total_rows - ROWS) as f32;
             p.fill_rounded(cx + CARD_W - 5.0, cy + GRID_Y + top, 2.0, thumb, 1.0, t.text_secondary);
         }
+        if let Some(edit) = &v.tile_edit {
+            // The text box: surface, 4 px corners, focus ring while typing.
+            let (bx, by, bw, bh) = (cx + M, cy + GRID_Y, CARD_W - M * 2.0, GRID_H);
+            p.fill_rounded(bx, by, bw, bh, 4.0, t.surface);
+            p.stroke_rounded(bx + 0.5, by + 0.5, bw - 1.0, bh - 1.0, 4.0, 1.0, t.focus_ring);
+            if let Some(f) = &edit_fmt {
+                let (text, color) = match edit.text.is_empty() {
+                    true if edit.note => ("Type a note|".to_string(), t.text_secondary),
+                    _ => (format!("{}|", edit.text), t.text),
+                };
+                p.text(&text, f, bx + 12.0, by + 10.0, bw - 24.0, bh - 20.0, color);
+            }
+        }
         p.fill_rect(cx, cy + FOOTER_Y - 4.0, CARD_W, 1.0, t.divider);
         if let Some(f) = &caption_lead {
             let hint = match v.sel.len() {
+                _ if v.tile_edit.as_ref().is_some_and(|e| e.note) => "Esc or click away to save     Enter new line".to_string(),
+                _ if v.tile_edit.is_some() => "Enter save     Esc cancel     Leave empty to show the address".to_string(),
                 _ if v.drop_hover && app.stack.names.len() > 1 => format!("Drop to add to {}     Point at another name to switch", app.stack.names[app.stack.current]),
                 _ if v.drop_hover => format!("Drop to add to {}", app.stack.names[app.stack.current]),
                 _ if v.dragging_in => "Move onto the stack to drop here".to_string(),
@@ -515,6 +612,18 @@ pub fn render(app: &mut App) {
     };
     let dx = ((1.0 - shown) * SLIDE * v.dpi as f32 / 96.0 * toward_tab).round() as i32;
     let _ = surf.present(v.hwnd, v.origin.0 + dx, v.origin.1, shown);
+    // The peek follows the focused tile.
+    if app.peek.open {
+        peek::render(app);
+    }
+}
+
+/// The stack card in screen pixels, and the DPI it is drawn at.
+pub fn card_rect(app: &App) -> (RECT, u32) {
+    let v = &app.stack_view;
+    let s = v.dpi as f32 / 96.0;
+    let (x, y) = (v.origin.0 + (PAD * s) as i32, v.origin.1 + (PAD * s) as i32);
+    (RECT { left: x, top: y, right: x + (CARD_W * s) as i32, bottom: y + (CARD_H * s) as i32 }, v.dpi)
 }
 
 pub fn open(app: &mut App, target: HWND) {
@@ -587,6 +696,62 @@ fn finish_rename(app: &mut App, commit: bool) {
         }
         render(app);
     }
+}
+
+/// Starts a new, empty note at the front of the stack and types into it.
+fn new_note(app: &mut App) {
+    finish_rename(app, true);
+    finish_tile_edit(app, true);
+    peek::close(app);
+    let id = app.stack.add_note();
+    reset_view(app);
+    app.stack_view.tile_edit = Some(TileEdit { id, text: String::new(), note: true });
+    render(app);
+}
+
+/// Edits a note's text, or a link's name, in the box over the grid.
+fn start_tile_edit(app: &mut App, id: u64) {
+    let Some(item) = app.stack.items.iter().find(|i| i.id == id) else { return };
+    let edit = match &item.kind {
+        Kind::Text(t) if item.extra.note => TileEdit { id, text: t.clone(), note: true },
+        Kind::Link(_) => TileEdit { id, text: shelf::label(item), note: false },
+        _ => return,
+    };
+    peek::close(app);
+    app.stack_view.tile_edit = Some(edit);
+    render(app);
+}
+
+/// Saves what was typed (a note always; a link's name unless `commit` is
+/// false), and drops a note left empty.
+fn finish_tile_edit(app: &mut App, commit: bool) {
+    let Some(edit) = app.stack_view.tile_edit.take() else { return };
+    if edit.note {
+        app.stack.set_note(edit.id, edit.text);
+    } else if commit {
+        app.stack.set_title(edit.id, &edit.text);
+    }
+    app.stack.save();
+    refresh(app);
+    announce(app);
+}
+
+/// Typing into the note or name box.
+fn tile_edit_char(app: &mut App, c: char) {
+    let Some(edit) = &mut app.stack_view.tile_edit else { return };
+    match c {
+        '\r' if !edit.note => return finish_tile_edit(app, true),
+        '\r' => edit.text.push('\n'),
+        '\u{8}' => {
+            edit.text.pop();
+        }
+        c if c.is_control() => return,
+        c => edit.text.push(c),
+    }
+    if edit.text.chars().count() > NOTE_MAX {
+        edit.text.pop();
+    }
+    render(app);
 }
 
 /// Typing while a stack is being renamed. Returns false for keys it leaves
@@ -666,20 +831,60 @@ fn tile_menu(app: &mut App, at: POINT) {
     }
     // Copy what the actions need now: the menu and dialogs below can close
     // the flyout or change the stack.
-    let (text_paths, text_md, files, refs, first_is_text) = {
-        let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| ids.contains(&i.id)).map(|i| &i.kind).collect();
+    let (text_paths, text_md, files, refs, first_is_text, first_missing) = {
+        let items: Vec<&ShelfItem> = app.stack.items.iter().filter(|i| ids.contains(&i.id)).collect();
+        let kinds: Vec<&Kind> = items.iter().map(|i| &i.kind).collect();
         let refs = kinds.iter().any(|k| !matches!(k, Kind::Text(_)));
-        (actions::paths_text(&kinds), actions::markdown(&kinds), actions::existing_files(&kinds), refs, matches!(kinds[0], Kind::Text(_)))
+        let missing = match kinds[0] {
+            Kind::File(p) if !p.exists() => Some(p.clone()),
+            _ => None,
+        };
+        (actions::paths_text(&kinds), actions::markdown(&items), actions::existing_files(&kinds), refs, matches!(kinds[0], Kind::Text(_)), missing)
     };
     let one = ids.len() == 1;
+    let find = first_missing.filter(|_| one);
+    let plain = match app.stack.items.iter().find(|i| i.id == ids[0]) {
+        Some(ShelfItem { kind: Kind::Text(t), extra, .. }) if one && extra.is_rich() => Some(t.clone()),
+        _ => None,
+    };
+    // A color's other notations, and switching text between text and code.
+    let (color, show_as) = match app.stack.items.iter().find(|i| i.id == ids[0]).filter(|_| one).and_then(shelf::form) {
+        Some(Form::Color(c)) => (Some(c), None),
+        Some(Form::Code) => (None, Some(shelf::AS_TEXT)),
+        Some(Form::Text) => (None, Some(shelf::AS_CODE)),
+        _ => (None, None),
+    };
+    // A note's text and a link's name can be typed over.
+    let edit = match app.stack.items.iter().find(|i| i.id == ids[0]).filter(|_| one) {
+        Some(i) if i.extra.note => Some(w!("Edit note")),
+        Some(ShelfItem { kind: Kind::Link(_), .. }) => Some(w!("Rename")),
+        _ => None,
+    };
     let has_files = !files.is_empty();
     let menu = unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
         let on = |b: bool| if b { MF_ENABLED } else { MF_GRAYED };
-        if one {
+        if find.is_some() {
+            let _ = AppendMenuW(menu, MF_STRING, A_FIND as usize, w!("Find file…"));
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        } else if one {
             let open = if first_is_text { w!("Paste") } else { w!("Open") };
             let _ = AppendMenuW(menu, MF_STRING, A_OPEN as usize, open);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        }
+        if let Some(label) = edit {
+            let _ = AppendMenuW(menu, MF_STRING, A_EDIT as usize, label);
+        }
+        if plain.is_some() {
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_PLAIN as usize, w!("Copy as plain text"));
+        }
+        if color.is_some() {
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_HEX as usize, w!("Copy as hex"));
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_RGB as usize, w!("Copy as RGB"));
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_HSL as usize, w!("Copy as HSL"));
+        }
+        if let Some(f) = show_as {
+            let _ = AppendMenuW(menu, MF_STRING, A_SHOW_AS as usize, if f == shelf::AS_TEXT { w!("Show as text") } else { w!("Show as code") });
         }
         let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_PATHS as usize, if one { w!("Copy path") } else { w!("Copy paths") });
         let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_MD as usize, w!("Copy as Markdown link"));
@@ -697,10 +902,29 @@ fn tile_menu(app: &mut App, at: POINT) {
         let _ = AppendMenuW(menu, MF_STRING, A_REMOVE as usize, w!("Remove"));
         menu
     };
-    match popup(app.stack_view.hwnd, menu, at) {
+    let cmd = popup(app.stack_view.hwnd, menu, at);
+    match cmd {
         A_OPEN => activate(app, app.stack.items.iter().position(|i| i.id == ids[0]).unwrap_or(0)),
         A_COPY_PATHS => copy_text(app, &text_paths, if one { "Path copied" } else { "Paths copied" }),
         A_COPY_MD => copy_text(app, &text_md, "Markdown copied"),
+        A_COPY_PLAIN => copy_text(app, plain.as_deref().unwrap_or_default(), "Text copied"),
+        A_COPY_HEX | A_COPY_RGB | A_COPY_HSL => {
+            let Some(c) = color else { return };
+            let text = match cmd {
+                A_COPY_HEX => detect::hex(c),
+                A_COPY_RGB => detect::rgb(c),
+                _ => detect::hsl(c),
+            };
+            copy_text(app, &text, "Color copied");
+        }
+        A_EDIT => start_tile_edit(app, ids[0]),
+        A_SHOW_AS => {
+            let Some(f) = show_as else { return };
+            app.stack.set_form(ids[0], f);
+            app.stack.save();
+            render(app);
+            announce(app);
+        }
         A_ZIP => {
             close(app, false);
             if let Some(out) = actions::pick_zip(HWND::default(), &files[0]) {
@@ -712,6 +936,20 @@ fn tile_menu(app: &mut App, at: POINT) {
             close(app, false);
             if let Some(folder) = actions::pick_folder(HWND::default()) {
                 actions::copy_to(HWND::default(), &files, &folder);
+            }
+        }
+        A_FIND => {
+            let Some(old) = find else { return };
+            if app.stack.find_again(ids[0]).is_some() {
+                app.stack.save();
+                refresh(app);
+                return;
+            }
+            close(app, false);
+            if let Some(path) = actions::pick_file(HWND::default(), &old)
+                && app.stack.replace_path(ids[0], path)
+            {
+                app.stack.save();
             }
         }
         A_REMOVE => remove_selected(app),
@@ -750,6 +988,7 @@ fn head_menu(app: &mut App, stack: usize, at: POINT) {
         let Ok(menu) = CreatePopupMenu() else { return };
         let _ = AppendMenuW(menu, MF_STRING, H_RENAME as usize, w!("Rename\tF2"));
         let _ = AppendMenuW(menu, MF_STRING, H_NEW as usize, w!("New stack\tCtrl+N"));
+        let _ = AppendMenuW(menu, MF_STRING, H_NOTE as usize, w!("New note\tCtrl+Shift+N"));
         let delete = match n {
             0 => "Delete stack".to_string(),
             1 => "Delete stack and its item".to_string(),
@@ -763,6 +1002,7 @@ fn head_menu(app: &mut App, stack: usize, at: POINT) {
     match popup(app.stack_view.hwnd, menu, at) {
         H_RENAME => start_rename(app),
         H_NEW => new_stack(app),
+        H_NOTE => new_note(app),
         H_DELETE => delete_stack(app, stack),
         _ => {}
     }
@@ -886,8 +1126,10 @@ pub fn close(app: &mut App, restore: bool) {
     if !app.stack_view.open {
         return;
     }
-    // Clicking away keeps a name that was being typed.
+    // Clicking away keeps a name or a note that was being typed.
     finish_rename(app, true);
+    finish_tile_edit(app, true);
+    peek::close(app);
     let d = ms(app, CLOSE_MS);
     let v = &mut app.stack_view;
     v.open = false;
@@ -933,25 +1175,44 @@ pub fn activate(app: &mut App, index: usize) {
         Missing,
         Open(String),
         Paste(String),
+        /// Rich text goes on the clipboard with its formatting.
+        PasteRich(IDataObject),
     }
-    let act = match app.stack.items.get(index).map(|i| &i.kind) {
-        None => return,
-        Some(Kind::File(p)) if !p.exists() => Act::Missing,
-        Some(Kind::File(p)) => Act::Open(p.to_string_lossy().into_owned()),
-        Some(Kind::Link(l)) if l.starts_with("www.") => Act::Open(format!("https://{l}")),
-        Some(Kind::Link(l)) => Act::Open(l.clone()),
-        Some(Kind::Text(t)) => Act::Paste(t.clone()),
+    // A file moved on the same drive is found again before it counts as missing.
+    if let Some(item) = app.stack.items.get(index)
+        && matches!(&item.kind, Kind::File(p) if !p.exists())
+        && app.stack.find_again(item.id).is_some()
+    {
+        app.stack.save();
+    }
+    let Some(item) = app.stack.items.get(index) else { return };
+    let act = match &item.kind {
+        Kind::File(p) if !p.exists() => Act::Missing,
+        Kind::File(p) => Act::Open(p.to_string_lossy().into_owned()),
+        Kind::Link(l) if l.starts_with("www.") => Act::Open(format!("https://{l}")),
+        Kind::Link(l) => Act::Open(l.clone()),
+        Kind::Text(t) if shelf::form(item) == Some(Form::Email) => Act::Open(format!("mailto:{}", t.trim())),
+        Kind::Text(t) if shelf::form(item) == Some(Form::Phone) => Act::Open(format!("tel:{}", t.trim().replace(' ', ""))),
+        Kind::Text(t) => match dnd::data_object(item).filter(|_| item.extra.is_rich()) {
+            Some(data) => Act::PasteRich(data),
+            None => Act::Paste(t.clone()),
+        },
     };
     match act {
-        Act::Missing => crate::notify(app, "File not found", "It was moved or deleted. Press Del to remove it from the stack."),
+        Act::Missing => crate::notify(app, "File not found", "It was moved or deleted. Right-click it to find it, or press Del to remove it."),
         Act::Open(target) => {
             close(app, false);
             unsafe {
                 ShellExecuteW(None, w!("open"), &HSTRING::from(target), None, None, SW_SHOWNORMAL);
             }
         }
-        Act::Paste(text) => {
-            if clipboard::write_text(app.host, &text) {
+        Act::Paste(_) | Act::PasteRich(_) => {
+            let copied = match &act {
+                Act::PasteRich(data) => clipboard::write_object(data),
+                Act::Paste(text) => clipboard::write_text(app.host, text),
+                _ => false,
+            };
+            if copied {
                 close(app, true);
                 if !app.stack_view.target.is_invalid() {
                     crate::schedule_paste(app);
@@ -1039,12 +1300,14 @@ fn start_drag(app: &mut App, index: usize, grab: POINT) {
         render(app);
     }
     let chosen = app.stack_view.sel.ordered(&ids);
+    // Alt held as the drag starts sends another form of the items.
+    let alt = key_down(VK_MENU);
     let data = {
-        let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).map(|i| &i.kind).collect();
-        dnd::data_object_many(&kinds)
+        let items: Vec<&ShelfItem> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).collect();
+        if alt { dnd::data_object_alt(&items).map(|(d, f)| (d, Some(f))) } else { dnd::data_object_many(&items).map(|d| (d, None)) }
     };
-    let Some(data) = data else { return };
-    let image = drag_image(app, index, chosen.len(), grab);
+    let Some((data, form)) = data else { return };
+    let image = drag_image(app, index, chosen.len(), grab, form);
     let d = ms(app, HOVER_MS);
     let v = &mut app.stack_view;
     v.lifted = chosen;
@@ -1052,7 +1315,7 @@ fn start_drag(app: &mut App, index: usize, grab: POINT) {
     v.lift.set(1.0, d);
     animate(app);
     // Messages keep flowing during the drag; hold no app state across it.
-    dnd::drag_out(&data, image);
+    dnd::drag_out(&data, image, !alt);
     if let Some(app) = crate::app_mut() {
         app.stack_view.lift.set(0.0, d);
         animate(app);
@@ -1074,6 +1337,25 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
     if msg == WM_KEYDOWN && app.stack_view.editing.is_some() && edit_key(app, vk) {
         return Some(LRESULT(0));
     }
+    // While a note or name is being typed, keys go to it, not to the tiles.
+    if let Some(note) = app.stack_view.tile_edit.as_ref().map(|e| e.note) {
+        match msg {
+            WM_KEYDOWN if vk == VK_ESCAPE => finish_tile_edit(app, note),
+            WM_KEYDOWN => {}
+            WM_CHAR => {
+                if let Some(c) = char::from_u32(wparam.0 as u32) {
+                    tile_edit_char(app, c);
+                }
+            }
+            // A click anywhere in the stack saves and goes on as usual.
+            WM_LBUTTONDOWN | WM_RBUTTONUP => {
+                finish_tile_edit(app, true);
+                return handle(app, hwnd, msg, wparam, lparam);
+            }
+            _ => return None,
+        }
+        return Some(LRESULT(0));
+    }
     match msg {
         WM_CHAR => {
             if let Some(c) = char::from_u32(wparam.0 as u32) {
@@ -1083,11 +1365,14 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
         WM_KEYDOWN if app.stack_view.editing.is_some() => {}
         WM_KEYDOWN => match vk {
             VK_TAB if key_down(VK_CONTROL) => cycle_stack(app, if key_down(VK_SHIFT) { -1 } else { 1 }),
+            VK_N if key_down(VK_CONTROL) && key_down(VK_SHIFT) => new_note(app),
             VK_N if key_down(VK_CONTROL) => new_stack(app),
             VK_F2 => start_rename(app),
             VK_APPS => focused_menu(app),
             VK_F10 if key_down(VK_SHIFT) => focused_menu(app),
+            VK_ESCAPE if app.peek.open => peek::close(app),
             VK_ESCAPE => close(app, true),
+            VK_SPACE => peek::toggle(app),
             VK_RIGHT => move_focus(app, 1),
             VK_LEFT => move_focus(app, -1),
             VK_DOWN => move_focus(app, COLS as isize),
