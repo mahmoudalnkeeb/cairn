@@ -9,6 +9,7 @@ mod clipboard;
 mod dnd;
 mod edgetab;
 mod gfx;
+mod nearzone;
 mod select;
 mod settings;
 mod shelf;
@@ -46,6 +47,12 @@ const CMD_QUIT: u32 = 3;
 const CMD_CLEAR: u32 = 4;
 const CMD_UNDO_CLEAR: u32 = 5;
 const CMD_ADD_CLIPBOARD: u32 = 6;
+const CMD_DRIVE_COPIES: u32 = 7;
+const CMD_SHAKE: u32 = 8;
+
+/// Posted by a worker when a file copy finishes: wParam is the item id,
+/// lParam a boxed Option<PathBuf> with the copy.
+const WM_COPY_DONE: u32 = WM_APP + 5;
 const CMD_EDGE_LEFT: u32 = 10;
 const CMD_EDGE_RIGHT: u32 = 11;
 const CMD_CENTER_TAB: u32 = 12;
@@ -63,6 +70,7 @@ pub struct App {
     pub active_tab: usize,
     pub stack: shelf::Shelf,
     pub stack_view: stackview::StackView,
+    pub near: nearzone::NearZone,
     pub settings: Settings,
     /// What "Clear stack" took, while it can still be undone.
     cleared: Vec<shelf::ShelfItem>,
@@ -215,6 +223,7 @@ pub fn on_drag_hover(zone: dnd::Zone, over: bool) {
             app.stack_view.drop_hover = over;
             stackview::render(app);
         }
+        dnd::Zone::Near => nearzone::set_hover(app, over),
     }
 }
 
@@ -223,17 +232,55 @@ pub fn on_drop(zone: dnd::Zone, dropped: shelf::Dropped) {
     let added = app.stack.add(dropped);
     if added > 0 {
         app.stack.save();
+        copy_from_drives(app, added);
     }
     match zone {
         dnd::Zone::Tab(hwnd) => {
             if let Some(i) = tab_index(app, hwnd) {
                 edgetab::dropped(app, i, added);
             }
-            if app.stack_view.open {
-                stackview::refresh(app);
-            }
         }
-        dnd::Zone::Stack => stackview::refresh(app),
+        dnd::Zone::Near => nearzone::dropped(app, added),
+        dnd::Zone::Stack => {}
+    }
+    if app.stack_view.open {
+        stackview::refresh(app);
+    }
+}
+
+/// USB sticks, card readers, discs and network shares: files there may be
+/// gone the next time the stack is used.
+fn on_unreliable_drive(path: &std::path::Path) -> bool {
+    let s = path.to_string_lossy();
+    if s.starts_with("\\\\") {
+        return true;
+    }
+    let Some(root) = s.get(..3).filter(|r| r.ends_with(":\\")) else { return false };
+    let kind = unsafe { windows::Win32::Storage::FileSystem::GetDriveTypeW(&HSTRING::from(root)) };
+    matches!(kind, 2 | 4 | 5) // DRIVE_REMOVABLE, DRIVE_REMOTE, DRIVE_CDROM
+}
+
+/// With the setting on, copies newly added files from removable and network
+/// drives into Cairn's folder in the background, then points the items at
+/// the copies.
+fn copy_from_drives(app: &App, added: usize) {
+    if !app.settings.drive_copies {
+        return;
+    }
+    let host = app.host.0 as isize;
+    for item in &app.stack.items[..added.min(app.stack.items.len())] {
+        if let shelf::Kind::File(p) = &item.kind
+            && p.is_file()
+            && on_unreliable_drive(p)
+        {
+            let (id, src) = (item.id, p.clone());
+            std::thread::spawn(move || {
+                let copy = Box::new(shelf::copy_in(&src));
+                unsafe {
+                    let _ = PostMessageW(HWND(host as *mut _), WM_COPY_DONE, WPARAM(id as usize), LPARAM(Box::into_raw(copy) as isize));
+                }
+            });
+        }
     }
 }
 
@@ -285,17 +332,18 @@ fn undo_clear(app: &mut App) {
     notify(app, "Undone", &format!("{what} back in {name}."));
 }
 
-/// Adds whatever is on the clipboard (files, a link or text) to the current
-/// stack, and shows the result on the tab under the cursor.
+/// Adds whatever is on the clipboard (files, a link, text or an image) to the
+/// current stack, and shows the result on the tab under the cursor.
 fn add_clipboard(app: &mut App) {
     let dropped = unsafe { OleGetClipboard() }.ok().and_then(|data| dnd::read(&data));
     let Some(dropped) = dropped else {
-        notify(app, "Nothing to add", "The clipboard holds no files, links or text.");
+        notify(app, "Nothing to add", "The clipboard holds no files, links, text or images.");
         return;
     };
     let added = app.stack.add(dropped);
     if added > 0 {
         app.stack.save();
+        copy_from_drives(app, added);
     }
     if app.stack_view.open {
         stackview::refresh(app);
@@ -413,6 +461,9 @@ pub fn show_context_menu(app: &mut App) {
             let _ = AppendMenuW(popup, MF_POPUP, mons.0 as usize, w!("Show tab on"));
         }
         let login = if settings::run_at_login() { MF_CHECKED } else { MF_UNCHECKED };
+        let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
+        let _ = AppendMenuW(popup, MF_STRING | check(app.settings.shake), CMD_SHAKE as usize, w!("Shake while dragging to show a drop zone"));
+        let _ = AppendMenuW(popup, MF_STRING | check(app.settings.drive_copies), CMD_DRIVE_COPIES as usize, w!("Keep copies of files from USB and network drives"));
         let _ = AppendMenuW(popup, MF_STRING | login, CMD_RUN_AT_LOGIN as usize, w!("Run at login"));
         let _ = AppendMenuW(popup, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(popup, MF_STRING, CMD_QUIT as usize, w!("Quit Cairn"));
@@ -432,6 +483,15 @@ pub fn show_context_menu(app: &mut App) {
             CMD_CENTER_TAB => center_tab(app),
             c if (CMD_MONITOR_BASE..CMD_MONITOR_BASE + monitors.len() as u32).contains(&c) => {
                 toggle_monitor(app, monitors[(c - CMD_MONITOR_BASE) as usize].device.clone())
+            }
+            CMD_DRIVE_COPIES => {
+                app.settings.drive_copies = !app.settings.drive_copies;
+                app.settings.save();
+            }
+            CMD_SHAKE => {
+                app.settings.shake = !app.settings.shake;
+                app.settings.save();
+                nearzone::set_enabled(app, app.settings.shake);
             }
             CMD_RUN_AT_LOGIN => {
                 let on = !settings::run_at_login();
@@ -453,6 +513,7 @@ fn quit(app: &mut App) {
         let _ = UnregisterHotKey(app.host, HOTKEY_ID);
         let _ = UnregisterHotKey(app.host, CLIP_HOTKEY_ID);
         let _ = Shell_NotifyIconW(NIM_DELETE, &tray_data(app));
+        app.stack.prune_owned(&[]);
         PostQuitMessage(0);
     }
 }
@@ -513,6 +574,27 @@ fn host_handle(app: &mut App, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Optio
     match msg {
         WM_HOTKEY if wparam.0 as i32 == HOTKEY_ID => toggle_stack(app),
         WM_HOTKEY if wparam.0 as i32 == CLIP_HOTKEY_ID => add_clipboard(app),
+        nearzone::WM_SHAKE if !app.near.shown && !app.stack_view.open => {
+            let pt = POINT { x: (lparam.0 & 0xffff_ffff) as u32 as i32, y: (lparam.0 >> 32) as i32 };
+            nearzone::show_at(app, pt);
+        }
+        nearzone::WM_SHAKE_END => nearzone::hide_soon(app, 500),
+        WM_COPY_DONE => {
+            let copy = unsafe { Box::from_raw(lparam.0 as *mut Option<std::path::PathBuf>) };
+            match *copy {
+                Some(path) if app.stack.replace_path(wparam.0 as u64, path.clone()) => {
+                    app.stack.save();
+                    if app.stack_view.open {
+                        stackview::refresh(app);
+                    }
+                }
+                // The item was removed while copying.
+                Some(path) => {
+                    let _ = std::fs::remove_file(path);
+                }
+                None => notify(app, "Copy failed", "Cairn could not keep a copy of a file from a removable or network drive. The item still points at the drive."),
+            }
+        }
         actions::WM_ZIP_DONE => match wparam.0 {
             1 => {
                 let note = app.zip_out.take().map_or("The zip is ready.".to_string(), |p| format!("Saved {}", p.display()));
@@ -531,6 +613,7 @@ fn host_handle(app: &mut App, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Optio
                 let _ = KillTimer(app.host, UNDO_TIMER);
             }
             app.cleared.clear();
+            app.stack.prune_owned(&[]);
         }
         WM_TIMER if wparam.0 == FULLSCREEN_TIMER => poll_fullscreen(app),
         WM_TIMER if wparam.0 == PASTE_TIMER => {
@@ -565,6 +648,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
     if let Some(app) = app() {
         let handled = if let Some(i) = tab_index(app, hwnd) {
             edgetab::handle(app, i, hwnd, msg, wparam, lparam)
+        } else if hwnd == app.near.hwnd {
+            nearzone::handle(app, msg, wparam)
         } else if hwnd == app.stack_view.hwnd {
             stackview::handle(app, hwnd, msg, wparam, lparam)
         } else if hwnd == app.host {
@@ -607,6 +692,7 @@ fn main() -> Result<()> {
         let floating = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
         let host = create_window(w!("CairnHost"), WS_EX_TOOLWINDOW)?;
         let stack_hwnd = create_window(w!("CairnStack"), floating)?;
+        let near_hwnd = create_window(w!("CairnNear"), floating | WS_EX_NOACTIVATE)?;
 
         let gfx = Gfx::new()?;
         let tray_icon = make_tray_icon(&gfx);
@@ -619,6 +705,7 @@ fn main() -> Result<()> {
             active_tab: 0,
             stack: shelf::Shelf::load(),
             stack_view: stackview::StackView::new(stack_hwnd),
+            near: nearzone::NearZone::new(near_hwnd),
             settings: Settings::load(),
             cleared: Vec::new(),
             hotkey: None,
@@ -641,6 +728,10 @@ fn main() -> Result<()> {
         tray_add(app);
         edgetab::sync(app);
         let _ = dnd::register(stack_hwnd, dnd::Zone::Stack);
+        nearzone::register(near_hwnd);
+        nearzone::set_enabled(app, app.settings.shake);
+        // Copies nothing refers to any more, from removals since the last run.
+        app.stack.prune_owned(&[]);
         SetTimer(host, FULLSCREEN_TIMER, 1000, None);
         match chosen {
             None => notify(app, "Hotkey unavailable", "Every Cairn hotkey is in use by another app. Use the edge tab or the tray icon."),

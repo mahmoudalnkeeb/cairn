@@ -2,6 +2,18 @@
 
 All notable changes to Cairn are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-03
+
+### Added
+
+- Images with no file behind them, such as a screenshot or an image copied from an app, can be dropped or added with Ctrl+Alt+V. Cairn saves its own copy.
+- "Keep copies of files from USB and network drives" in the tray menu. With it on, files dropped from those drives are copied into Cairn in the background, so they are still there after the drive is gone.
+- "Shake while dragging to show a drop zone" in the tray menu. Shake the mouse left and right while dragging and a drop zone opens next to the cursor. Off by default.
+
+### Changed
+
+- Cairn's own copies live in `%APPDATA%\Cairn\files` and are deleted once no stack holds them.
+
 ## [0.3.0] - 2026-11-03
 
 ### Added
@@ -48,6 +60,7 @@ The first public version.
 - Windows blocks dragging into or out of apps running as administrator.
 - Not signed yet, so Windows SmartScreen may warn on first run.
 
+[0.4.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mahmoudalnkeeb/cairn/releases/tag/v0.1.0

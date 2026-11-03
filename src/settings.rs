@@ -44,6 +44,10 @@ pub struct Settings {
     pub monitors_off: Vec<String>,
     /// Where the tab's center sits along the edge: 0 top, 1 bottom.
     pub tab_pos: f32,
+    /// Keep Cairn's own copy of files dropped from USB and network drives.
+    pub drive_copies: bool,
+    /// Shaking the mouse during a drag shows a drop zone near the cursor.
+    pub shake: bool,
 }
 
 impl Settings {
@@ -53,7 +57,7 @@ impl Settings {
     }
 
     fn parse(text: &str) -> Settings {
-        let mut s = Settings { hotkey: 0, edge: Edge::Right, monitors_off: Vec::new(), tab_pos: 0.5 };
+        let mut s = Settings { hotkey: 0, edge: Edge::Right, monitors_off: Vec::new(), tab_pos: 0.5, drive_copies: false, shake: false };
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else { continue };
             match (key.trim(), value.trim()) {
@@ -70,6 +74,8 @@ impl Settings {
                         s.tab_pos = p.clamp(0.0, 1.0);
                     }
                 }
+                ("drive_copies", v) => s.drive_copies = v == "on",
+                ("shake", v) => s.shake = v == "on",
                 _ => {}
             }
         }
@@ -81,11 +87,14 @@ impl Settings {
             Edge::Left => "left",
             Edge::Right => "right",
         };
+        let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "hotkey={}\nedge={edge}\nmonitors_off={}\ntab_pos={:.3}\n",
+            "hotkey={}\nedge={edge}\nmonitors_off={}\ntab_pos={:.3}\ndrive_copies={}\nshake={}\n",
             HOTKEYS[self.hotkey].label,
             self.monitors_off.join(";"),
-            self.tab_pos
+            self.tab_pos,
+            on(self.drive_copies),
+            on(self.shake)
         )
     }
 
@@ -125,13 +134,14 @@ mod tests {
 
     #[test]
     fn round_trips_and_ignores_junk() {
-        let s = Settings::parse("hotkey=Ctrl+Alt+K\nedge=left\nmonitors_off=\\\\.\\DISPLAY2;\\\\.\\DISPLAY3\ntab_pos=0.25\nnonsense\n");
+        let s = Settings::parse("hotkey=Ctrl+Alt+K\nedge=left\nmonitors_off=\\\\.\\DISPLAY2;\\\\.\\DISPLAY3\ntab_pos=0.25\ndrive_copies=on\nnonsense\n");
         assert_eq!(HOTKEYS[s.hotkey].label, "Ctrl+Alt+K");
         assert_eq!(s.edge, Edge::Left);
         assert_eq!(s.monitors_off, ["\\\\.\\DISPLAY2", "\\\\.\\DISPLAY3"]);
         let back = Settings::parse(&s.serialize());
         assert_eq!((back.hotkey, back.edge, &back.monitors_off), (s.hotkey, s.edge, &s.monitors_off));
         assert!((back.tab_pos - 0.25).abs() < 0.001);
+        assert!(back.drive_copies && !back.shake);
     }
 
     #[test]
@@ -140,5 +150,6 @@ mod tests {
         assert_eq!((s.hotkey, s.edge), (0, Edge::Right));
         assert!(s.monitors_off.is_empty());
         assert_eq!(s.tab_pos, 1.0);
+        assert!(!s.drive_copies && !s.shake);
     }
 }

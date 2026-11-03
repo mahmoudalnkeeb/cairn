@@ -28,7 +28,8 @@
 - Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> to add whatever is on the clipboard.
 - Open a file or link with a double-click. A text item pastes into the app you came from.
 - Your stack stays until you remove it, including after a restart.
-- Cairn keeps references to your files. It never moves or copies them.
+- Cairn keeps references to your files and never moves them. It keeps its own copy only of images that had no file, like a screenshot, and, if you turn it on, of files from USB sticks and network drives.
+- Shake the mouse while dragging to get a drop zone right next to the cursor (turn it on in the tray menu).
 - An edge tab on every monitor, or only the ones you pick. Drag the tab up or down to where you want it.
 - The edge tab hides on the monitor where a game, fullscreen video or presentation is in front.
 - Works with screen readers such as Narrator and NVDA: each item is read with its name, kind and state.
@@ -61,12 +62,15 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Rename or delete a stack | Double-click its name or press <kbd>F2</kbd> to rename; right-click it for both |
 | Close the stack | <kbd>Esc</kbd> |
 | Move the tab | Drag it up or down the edge |
+| Drop without going to the edge | Turn on "Shake while dragging to show a drop zone", then shake the mouse left and right while dragging |
 
-Settings are in the tray menu: the shortcut (with two alternatives if another app already uses <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>), the screen edge, which monitors show the tab, and run at login. "Screen edge" also has "Center the tab".
+Settings are in the tray menu: the shortcut (with two alternatives if another app already uses <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>), the screen edge, which monitors show the tab, shake to show a drop zone, keeping copies of files from USB and network drives, and run at login. "Screen edge" also has "Center the tab".
+
+Shake to show is off by default. To notice a shake, Cairn watches mouse movement while it is on; it never changes or blocks your input.
 
 ## Your data
 
-Everything stays on your PC. The stack is saved to `%APPDATA%\Cairn`, encrypted for your Windows account. Cairn makes no network requests and has no account or telemetry.
+Everything stays on your PC. The stack is saved to `%APPDATA%\Cairn`, encrypted for your Windows account. Cairn's own copies of images and drive files are kept in `%APPDATA%\Cairn\files` and deleted once no stack holds them. Cairn makes no network requests and has no account or telemetry.
 
 To remove Cairn, quit it from the tray menu, delete `Cairn.exe`, and delete the `%APPDATA%\Cairn` folder.
 
@@ -90,9 +94,9 @@ Ideas for later:
 - [x] Several named stacks, shown as tabs (0.3)
 - [x] Actions on a selection: zip, copy paths, copy as Markdown links, send to a folder (0.3)
 - [x] A shortcut that adds the clipboard to the stack (0.3)
-- [ ] Show the stack near the cursor while dragging (opt-in)
-- [ ] Keep a full copy of image items, for screenshots that only existed in another app
-- [ ] Optionally copy files from removable or network drives into Cairn
+- [x] Show a drop zone near the cursor while dragging (opt-in) (0.4)
+- [x] Keep a full copy of image items, for screenshots that only existed in another app (0.4)
+- [x] Optionally copy files from removable or network drives into Cairn (0.4)
 
 ## Building from source
 

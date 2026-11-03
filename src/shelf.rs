@@ -63,10 +63,50 @@ pub const DEFAULT_NAME: &str = "Stack";
 pub enum Dropped {
     Paths(Vec<PathBuf>),
     Text(String),
+    /// Image data with no file behind it, such as a screenshot.
+    Image { bytes: Vec<u8>, ext: &'static str },
 }
 
 fn file() -> Option<PathBuf> {
     Some(store::dir()?.join("stack.bin"))
+}
+
+/// Where Cairn keeps its own copies: images that had no file, and files
+/// copied from removable or network drives.
+pub fn owned_dir() -> Option<PathBuf> {
+    let d = store::dir()?.join("files");
+    fs::create_dir_all(&d).ok()?;
+    Some(d)
+}
+
+/// "Image 2026-11-03 142501.png", or with " (2)" and so on if taken.
+fn free_name(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let dot = if ext.is_empty() { String::new() } else { format!(".{ext}") };
+    (1..)
+        .map(|n| if n == 1 { dir.join(format!("{stem}{dot}")) } else { dir.join(format!("{stem} ({n}){dot}")) })
+        .find(|p| !p.exists())
+        .unwrap()
+}
+
+fn stamp() -> String {
+    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    format!("{:04}-{:02}-{:02} {:02}{:02}{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}
+
+fn save_image(dir: &Path, bytes: &[u8], ext: &str, stamp: &str) -> Option<PathBuf> {
+    let path = free_name(dir, &format!("Image {stamp}"), ext);
+    fs::write(&path, bytes).ok()?;
+    Some(path)
+}
+
+/// Copies a file into Cairn's folder, keeping its name.
+pub fn copy_in(src: &Path) -> Option<PathBuf> {
+    let dir = owned_dir()?;
+    let stem = src.file_stem()?.to_string_lossy().into_owned();
+    let ext = src.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    let dest = free_name(&dir, &stem, &ext);
+    fs::copy(src, &dest).ok()?;
+    Some(dest)
 }
 
 fn looks_like_link(s: &str) -> bool {
@@ -156,6 +196,26 @@ impl Shelf {
         }
     }
 
+    /// Points an item, in whichever stack holds it, at a new path.
+    pub fn replace_path(&mut self, id: u64, path: PathBuf) -> bool {
+        let all = self.items.iter_mut().chain(self.others.iter_mut().flatten());
+        match all.into_iter().find(|i| i.id == id) {
+            Some(item) => {
+                item.kind = Kind::File(path);
+                item.icon = None;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Deletes Cairn's own copies that no stack refers to any more. Items in
+    /// `keep` (waiting for undo) count as referred to.
+    pub fn prune_owned(&self, keep: &[ShelfItem]) {
+        let Some(dir) = owned_dir() else { return };
+        prune(&dir, self.items.iter().chain(self.others.iter().flatten()).chain(keep));
+    }
+
     /// Moves items from the current stack to the front of another, skipping
     /// any it already holds. Returns how many moved.
     pub fn move_to(&mut self, ids: &[u64], stack: usize) -> usize {
@@ -199,6 +259,7 @@ impl Shelf {
     pub fn add(&mut self, dropped: Dropped) -> usize {
         let kinds: Vec<Kind> = match dropped {
             Dropped::Paths(paths) => paths.into_iter().map(Kind::File).collect(),
+            Dropped::Image { bytes, ext } => owned_dir().and_then(|d| save_image(&d, &bytes, ext, &stamp())).map(Kind::File).into_iter().collect(),
             Dropped::Text(t) if t.trim().is_empty() => Vec::new(),
             Dropped::Text(t) if looks_like_link(&t) => vec![Kind::Link(t.trim().to_string())],
             Dropped::Text(t) => vec![Kind::Text(t)],
@@ -233,6 +294,17 @@ impl Shelf {
             }
         }
         self.items.len() - before
+    }
+}
+
+fn prune<'a>(dir: &Path, items: impl Iterator<Item = &'a ShelfItem>) {
+    let used: Vec<&Path> = items.filter_map(|i| if let Kind::File(p) = &i.kind { Some(p.as_path()) } else { None }).collect();
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_file() && !used.contains(&p.as_path()) {
+            let _ = fs::remove_file(p);
+        }
     }
 }
 
@@ -431,6 +503,31 @@ mod tests {
         assert_eq!((s.current, s.names.len()), (0, 1));
         assert!(matches!(&s.items[0].kind, Kind::Text(t) if t == "two"));
         assert!(s.delete_stack(0).is_none());
+    }
+
+    #[test]
+    fn images_get_free_names_and_unused_copies_go() {
+        let dir = std::env::temp_dir().join("cairn-owned-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let a = save_image(&dir, b"one", "png", "2026-11-03 120000").unwrap();
+        let b = save_image(&dir, b"two", "png", "2026-11-03 120000").unwrap();
+        assert_eq!(a.file_name().unwrap(), "Image 2026-11-03 120000.png");
+        assert_eq!(b.file_name().unwrap(), "Image 2026-11-03 120000 (2).png");
+        let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None }];
+        prune(&dir, kept.iter());
+        assert!(a.exists() && !b.exists());
+    }
+
+    #[test]
+    fn replaces_a_path_in_any_stack() {
+        let mut s = shelf();
+        s.add(Dropped::Paths(vec!["E:\\usb.txt".into()]));
+        let id = s.items[0].id;
+        s.new_stack();
+        assert!(s.replace_path(id, "C:\\copy\\usb.txt".into()));
+        s.switch(0);
+        assert!(matches!(&s.items[0].kind, Kind::File(p) if p.to_string_lossy() == "C:\\copy\\usb.txt"));
     }
 
     #[test]

@@ -21,6 +21,8 @@ pub enum Zone {
     /// The edge tab window that took the drag.
     Tab(HWND),
     Stack,
+    /// The shake-to-show zone near the cursor.
+    Near,
 }
 
 fn url_format() -> u16 {
@@ -35,8 +37,48 @@ fn has(data: &IDataObject, cf: u16) -> bool {
     unsafe { data.QueryGetData(&format(cf)) == S_OK }
 }
 
+fn png_format() -> u16 {
+    unsafe { windows::Win32::System::DataExchange::RegisterClipboardFormatW(w!("PNG")) as u16 }
+}
+
 fn supported(data: &IDataObject) -> bool {
-    has(data, CF_HDROP.0) || has(data, url_format()) || has(data, CF_UNICODETEXT.0)
+    has(data, CF_HDROP.0) || has(data, url_format()) || has(data, CF_UNICODETEXT.0) || has(data, png_format()) || has(data, CF_DIB.0)
+}
+
+fn read_bytes(data: &IDataObject, cf: u16) -> Option<Vec<u8>> {
+    unsafe {
+        let mut medium = data.GetData(&format(cf)).ok()?;
+        let global = medium.u.hGlobal;
+        let size = GlobalSize(global);
+        let ptr = GlobalLock(global) as *const u8;
+        let bytes = (!ptr.is_null() && size > 0).then(|| std::slice::from_raw_parts(ptr, size).to_vec());
+        let _ = GlobalUnlock(global);
+        ReleaseStgMedium(&mut medium);
+        bytes
+    }
+}
+
+/// A .bmp file for CF_DIB data: the 14-byte file header, then the DIB as is.
+pub fn bmp_from_dib(dib: &[u8]) -> Option<Vec<u8>> {
+    let u32_at = |at: usize| Some(u32::from_le_bytes(dib.get(at..at + 4)?.try_into().ok()?));
+    let header = u32_at(0)? as usize;
+    let bits = u16::from_le_bytes(dib.get(14..16)?.try_into().ok()?) as u32;
+    let compression = u32_at(16)?;
+    let used = u32_at(32)?;
+    let colors = if used > 0 { used } else if bits <= 8 { 1 << bits } else { 0 };
+    // A 40-byte header with BI_BITFIELDS is followed by three colour masks.
+    let masks = if compression == 3 && header == 40 { 12 } else { 0 };
+    let offset = 14 + header + masks + colors as usize * 4;
+    if header < 40 || offset > 14 + dib.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(14 + dib.len());
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&((14 + dib.len()) as u32).to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&(offset as u32).to_le_bytes());
+    out.extend_from_slice(dib);
+    Some(out)
 }
 
 fn read_utf16(data: &IDataObject, cf: u16) -> Option<String> {
@@ -73,12 +115,20 @@ fn read_paths(data: &IDataObject) -> Option<Vec<PathBuf>> {
     }
 }
 
-/// Files first, then a link, then plain text.
+/// Files first, then a link, then plain text, then an image. Images come
+/// last because apps like Excel offer a picture of copied cells next to the
+/// text.
 pub fn read(data: &IDataObject) -> Option<Dropped> {
     if has(data, CF_HDROP.0) {
         return read_paths(data).map(Dropped::Paths);
     }
-    read_utf16(data, url_format()).or_else(|| read_utf16(data, CF_UNICODETEXT.0)).map(Dropped::Text)
+    if let Some(text) = read_utf16(data, url_format()).or_else(|| read_utf16(data, CF_UNICODETEXT.0)) {
+        return Some(Dropped::Text(text));
+    }
+    if let Some(png) = read_bytes(data, png_format()) {
+        return Some(Dropped::Image { bytes: png, ext: "png" });
+    }
+    read_bytes(data, CF_DIB.0).and_then(|dib| bmp_from_dib(&dib)).map(|bmp| Dropped::Image { bytes: bmp, ext: "bmp" })
 }
 
 /// Cairn keeps references, so ask the source to copy, never move.
@@ -282,5 +332,27 @@ mod tests {
         let (t, l) = (Kind::Text("one".into()), Kind::Link("https://example.com".into()));
         let obj = data_object_many(&[&t, &l]).expect("data object");
         assert!(matches!(read(&obj), Some(Dropped::Text(s)) if s == "one\r\nhttps://example.com"));
+    }
+
+    #[test]
+    fn dib_becomes_a_bmp_file() {
+        // A 2×1 24-bit DIB: 40-byte header, no palette, one padded row.
+        let mut dib = Vec::new();
+        for v in [40u32, 2, 1] {
+            dib.extend_from_slice(&v.to_le_bytes());
+        }
+        dib.extend_from_slice(&1u16.to_le_bytes());
+        dib.extend_from_slice(&24u16.to_le_bytes());
+        dib.extend_from_slice(&[0; 24]);
+        dib.extend_from_slice(&[255, 0, 0, 0, 255, 0, 0, 0]);
+        let bmp = bmp_from_dib(&dib).unwrap();
+        assert_eq!(&bmp[..2], b"BM");
+        assert_eq!(u32::from_le_bytes(bmp[2..6].try_into().unwrap()) as usize, bmp.len());
+        // Pixels start right after the two headers.
+        assert_eq!(u32::from_le_bytes(bmp[10..14].try_into().unwrap()), 54);
+        // An 8-bit DIB has a 256-colour palette in between.
+        dib[14] = 8;
+        dib.extend_from_slice(&[0; 1024]);
+        assert_eq!(u32::from_le_bytes(bmp_from_dib(&dib).unwrap()[10..14].try_into().unwrap()), 54 + 1024);
     }
 }
