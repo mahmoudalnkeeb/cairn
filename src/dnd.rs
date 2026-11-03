@@ -18,7 +18,7 @@ use windows::Win32::UI::Shell::Common;
 use windows::Win32::UI::WindowsAndMessaging::{IDC_ARROW, LoadCursorW, SetCursor};
 use windows::core::*;
 
-use crate::shelf::{Dropped, Kind};
+use crate::shelf::{Dropped, Kind, ShelfItem};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Zone {
@@ -306,9 +306,29 @@ pub fn read(data: &IDataObject) -> Option<Dropped> {
         {
             return Some(Dropped::Link { url: text, title });
         }
+        let (html, rtf) = (read_until_nul(data, html_format()), read_until_nul(data, rtf_format()));
+        if html.is_some() || rtf.is_some() {
+            return Some(Dropped::Rich { text, html, rtf });
+        }
         return Some(Dropped::Text(text));
     }
     read_image(data)
+}
+
+fn html_format() -> u16 {
+    registered(w!("HTML Format"))
+}
+
+fn rtf_format() -> u16 {
+    registered(w!("Rich Text Format"))
+}
+
+/// A format holding 8-bit text, without the end marker and the padding
+/// after it.
+fn read_until_nul(data: &IDataObject, cf: u16) -> Option<Vec<u8>> {
+    let mut bytes = read_bytes(data, cf)?;
+    bytes.truncate(bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len()));
+    (!bytes.is_empty()).then_some(bytes)
 }
 
 /// The page title a browser sends with a dragged link: Firefox as the second
@@ -548,10 +568,11 @@ fn set_global(obj: &IDataObject, cf: u16, bytes: &[u8]) -> Option<()> {
 }
 
 /// A data object other apps understand: the shell's own for files, plain
-/// text (plus a URL format for links) otherwise.
-pub fn data_object(kind: &Kind) -> Option<IDataObject> {
+/// text (plus a URL format for links, and the formatted versions of rich
+/// text, so each app takes the best one it can use) otherwise.
+pub fn data_object(item: &ShelfItem) -> Option<IDataObject> {
     unsafe {
-        match kind {
+        match &item.kind {
             Kind::File(p) => {
                 let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(p.to_string_lossy().as_ref()), None).ok()?;
                 item.BindToHandler(None, &BHID_DataObject).ok()
@@ -559,6 +580,11 @@ pub fn data_object(kind: &Kind) -> Option<IDataObject> {
             Kind::Text(t) => {
                 let obj: IDataObject = SHCreateDataObject(None, None, None).ok()?;
                 set_utf16(&obj, CF_UNICODETEXT.0, t)?;
+                for (cf, bytes) in [(html_format(), &item.extra.html), (rtf_format(), &item.extra.rtf)] {
+                    if let Some(b) = bytes {
+                        set_global(&obj, cf, &[b.as_slice(), &[0]].concat())?;
+                    }
+                }
                 Some(obj)
             }
             Kind::Link(l) => {
@@ -574,10 +600,11 @@ pub fn data_object(kind: &Kind) -> Option<IDataObject> {
 /// One data object for several items. Files win: if any are selected, only
 /// the files go, as one shell item array, so Explorer and mail clients see a
 /// normal multi-file drag. Otherwise texts and links go as lines of text.
-pub fn data_object_many(kinds: &[&Kind]) -> Option<IDataObject> {
-    if let [one] = kinds {
+pub fn data_object_many(items: &[&ShelfItem]) -> Option<IDataObject> {
+    if let [one] = items {
         return data_object(one);
     }
+    let kinds: Vec<&Kind> = items.iter().map(|i| &i.kind).collect();
     let paths: Vec<&PathBuf> = kinds.iter().filter_map(|k| if let Kind::File(p) = k { Some(p) } else { None }).collect();
     if paths.is_empty() {
         let lines: Vec<&str> = kinds
@@ -646,9 +673,9 @@ mod tests {
         let (a, b) = (dir.join("a.txt"), dir.join("sub").join("b.txt"));
         std::fs::write(&a, "a").unwrap();
         std::fs::write(&b, "b").unwrap();
-        let note = Kind::Text("skipped when files are present".into());
-        let missing = Kind::File(dir.join("gone.txt"));
-        let (ka, kb) = (Kind::File(a.clone()), Kind::File(b.clone()));
+        let note = item(Kind::Text("skipped when files are present".into()));
+        let missing = item(Kind::File(dir.join("gone.txt")));
+        let (ka, kb) = (item(Kind::File(a.clone())), item(Kind::File(b.clone())));
         let obj = data_object_many(&[&ka, &note, &missing, &kb]).expect("data object");
         let Some(Dropped::Paths(paths)) = read(&obj) else { panic!("no file drop") };
         // The shell gives back long names, and TEMP can be a short 8.3 path (as on CI runners).
@@ -658,9 +685,31 @@ mod tests {
 
     #[test]
     fn several_texts_drag_out_as_lines() {
-        let (t, l) = (Kind::Text("one".into()), Kind::Link("https://example.com".into()));
+        let (t, l) = (item(Kind::Text("one".into())), item(Kind::Link("https://example.com".into())));
         let obj = data_object_many(&[&t, &l]).expect("data object");
         assert!(matches!(read(&obj), Some(Dropped::Text(s)) if s == "one\r\nhttps://example.com"));
+    }
+
+    fn item(kind: Kind) -> ShelfItem {
+        ShelfItem { id: 0, kind, icon: None, extra: Default::default() }
+    }
+
+    #[test]
+    fn rich_text_keeps_its_formats_in_and_out() {
+        let html = b"Version:0.9\r\nStartHTML:0000000097\r\nEndHTML:0000000135\r\nStartFragment:0000000097\r\nEndFragment:0000000135\r\n<b>bold</b> and plain";
+        let obj: IDataObject = unsafe { SHCreateDataObject(None, None, None) }.unwrap();
+        set_utf16(&obj, CF_UNICODETEXT.0, "bold and plain").unwrap();
+        // Sources pad the memory after the end marker.
+        set_global(&obj, html_format(), &[&html[..], b"\0\0junk"].concat()).unwrap();
+        let Some(Dropped::Rich { text, html: Some(h), rtf: None }) = read(&obj) else { panic!("not rich") };
+        assert_eq!((text.as_str(), h.as_slice()), ("bold and plain", &html[..]));
+        let mut kept = item(Kind::Text(text));
+        kept.extra.html = Some(h);
+        kept.extra.rtf = Some(b"{\\rtf1 \\b bold\\b0  and plain}".to_vec());
+        let back = data_object(&kept).unwrap();
+        assert_eq!(read_until_nul(&back, html_format()).unwrap(), html);
+        assert_eq!(read_until_nul(&back, rtf_format()).unwrap(), b"{\\rtf1 \\b bold\\b0  and plain}");
+        assert_eq!(read_utf16(&back, CF_UNICODETEXT.0).unwrap(), "bold and plain");
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::DirectWrite::*;
+use windows::Win32::System::Com::IDataObject;
 use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT};
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -113,6 +114,7 @@ const A_ZIP: u32 = 4;
 const A_COPY_TO: u32 = 5;
 const A_REMOVE: u32 = 6;
 const A_FIND: u32 = 7;
+const A_COPY_PLAIN: u32 = 8;
 const A_MOVE_BASE: u32 = 100;
 // Stack tab menu.
 const H_RENAME: u32 = 1;
@@ -275,7 +277,7 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
         }
     });
     if let Some(fm) = &f.caption {
-        p.text(shelf::kind_label(&item.kind), fm, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
+        p.text(shelf::kind_label(item), fm, tx + 6.0, ty + 64.0, TILE_W - 12.0, 16.0, t.text_secondary);
     }
 }
 
@@ -684,6 +686,10 @@ fn tile_menu(app: &mut App, at: POINT) {
     };
     let one = ids.len() == 1;
     let find = first_missing.filter(|_| one);
+    let plain = match app.stack.items.iter().find(|i| i.id == ids[0]) {
+        Some(ShelfItem { kind: Kind::Text(t), extra, .. }) if one && extra.is_rich() => Some(t.clone()),
+        _ => None,
+    };
     let has_files = !files.is_empty();
     let menu = unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
@@ -695,6 +701,9 @@ fn tile_menu(app: &mut App, at: POINT) {
             let open = if first_is_text { w!("Paste") } else { w!("Open") };
             let _ = AppendMenuW(menu, MF_STRING, A_OPEN as usize, open);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        }
+        if plain.is_some() {
+            let _ = AppendMenuW(menu, MF_STRING, A_COPY_PLAIN as usize, w!("Copy as plain text"));
         }
         let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_PATHS as usize, if one { w!("Copy path") } else { w!("Copy paths") });
         let _ = AppendMenuW(menu, MF_STRING | on(refs), A_COPY_MD as usize, w!("Copy as Markdown link"));
@@ -716,6 +725,7 @@ fn tile_menu(app: &mut App, at: POINT) {
         A_OPEN => activate(app, app.stack.items.iter().position(|i| i.id == ids[0]).unwrap_or(0)),
         A_COPY_PATHS => copy_text(app, &text_paths, if one { "Path copied" } else { "Paths copied" }),
         A_COPY_MD => copy_text(app, &text_md, "Markdown copied"),
+        A_COPY_PLAIN => copy_text(app, plain.as_deref().unwrap_or_default(), "Text copied"),
         A_ZIP => {
             close(app, false);
             if let Some(out) = actions::pick_zip(HWND::default(), &files[0]) {
@@ -962,6 +972,8 @@ pub fn activate(app: &mut App, index: usize) {
         Missing,
         Open(String),
         Paste(String),
+        /// Rich text goes on the clipboard with its formatting.
+        PasteRich(IDataObject),
     }
     // A file moved on the same drive is found again before it counts as missing.
     if let Some(item) = app.stack.items.get(index)
@@ -970,13 +982,16 @@ pub fn activate(app: &mut App, index: usize) {
     {
         app.stack.save();
     }
-    let act = match app.stack.items.get(index).map(|i| &i.kind) {
-        None => return,
-        Some(Kind::File(p)) if !p.exists() => Act::Missing,
-        Some(Kind::File(p)) => Act::Open(p.to_string_lossy().into_owned()),
-        Some(Kind::Link(l)) if l.starts_with("www.") => Act::Open(format!("https://{l}")),
-        Some(Kind::Link(l)) => Act::Open(l.clone()),
-        Some(Kind::Text(t)) => Act::Paste(t.clone()),
+    let Some(item) = app.stack.items.get(index) else { return };
+    let act = match &item.kind {
+        Kind::File(p) if !p.exists() => Act::Missing,
+        Kind::File(p) => Act::Open(p.to_string_lossy().into_owned()),
+        Kind::Link(l) if l.starts_with("www.") => Act::Open(format!("https://{l}")),
+        Kind::Link(l) => Act::Open(l.clone()),
+        Kind::Text(t) => match dnd::data_object(item).filter(|_| item.extra.is_rich()) {
+            Some(data) => Act::PasteRich(data),
+            None => Act::Paste(t.clone()),
+        },
     };
     match act {
         Act::Missing => crate::notify(app, "File not found", "It was moved or deleted. Right-click it to find it, or press Del to remove it."),
@@ -986,8 +1001,13 @@ pub fn activate(app: &mut App, index: usize) {
                 ShellExecuteW(None, w!("open"), &HSTRING::from(target), None, None, SW_SHOWNORMAL);
             }
         }
-        Act::Paste(text) => {
-            if clipboard::write_text(app.host, &text) {
+        Act::Paste(_) | Act::PasteRich(_) => {
+            let copied = match &act {
+                Act::PasteRich(data) => clipboard::write_object(data),
+                Act::Paste(text) => clipboard::write_text(app.host, text),
+                _ => false,
+            };
+            if copied {
                 close(app, true);
                 if !app.stack_view.target.is_invalid() {
                     crate::schedule_paste(app);
@@ -1076,8 +1096,8 @@ fn start_drag(app: &mut App, index: usize, grab: POINT) {
     }
     let chosen = app.stack_view.sel.ordered(&ids);
     let data = {
-        let kinds: Vec<&Kind> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).map(|i| &i.kind).collect();
-        dnd::data_object_many(&kinds)
+        let items: Vec<&ShelfItem> = app.stack.items.iter().filter(|i| chosen.contains(&i.id)).collect();
+        dnd::data_object_many(&items)
     };
     let Some(data) = data else { return };
     let image = drag_image(app, index, chosen.len(), grab);

@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn markdown_links_escape_paths_and_labels() {
-        let item = |kind, title: Option<&str>| ShelfItem { id: 0, kind, icon: None, track: None, title: title.map(Into::into) };
+        let item = |kind, title: Option<&str>| ShelfItem { id: 0, kind, icon: None, extra: shelf::Extra { title: title.map(Into::into), ..Default::default() } };
         let f = item(Kind::File("C:\\My Docs\\[draft] #1.md".into()), None);
         assert_eq!(markdown(&[&f]), "[\\[draft\\] #1.md](file:///C:/My%20Docs/%5Bdraft%5D%20%231.md)");
         let (a, b) = (item(Kind::Link("www.e.com/x".into()), None), item(Kind::Link("https://e.com".into()), Some("E [home]")));

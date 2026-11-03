@@ -28,6 +28,7 @@
 - Right-click items to copy their paths, copy them as Markdown links, save them as a zip, copy them to a folder or move them to another stack.
 - Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> to add whatever is on the clipboard.
 - Open a file or link with a double-click. A text item pastes into the app you came from.
+- Text from a web page, Word or an email keeps its formatting (shown as "Rich text"). Apps that only take plain text get plain text, and "Copy as plain text" is on the right-click menu.
 - Your stack stays until you remove it, including after a restart.
 - A file moved to another folder on the same drive is found again when you open it. If Cairn can't find it, the tile says Missing: right-click it and choose "Find file…".
 - Cairn keeps references to your files and never moves them. It keeps its own copy only of things that had no file of their own, like a screenshot, an email attachment or a picture from a web page, and, if you turn it on, of files from USB sticks and network drives.

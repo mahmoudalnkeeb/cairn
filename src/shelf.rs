@@ -22,6 +22,8 @@ const MAGIC_V1: &[u8; 8] = b"CAIRNST1";
 /// skipped and new ones added.
 const FIELD_TRACK: u8 = 1;
 const FIELD_TITLE: u8 = 2;
+const FIELD_HTML: u8 = 3;
+const FIELD_RTF: u8 = 4;
 const ICON_PX: i32 = 48;
 
 /// Premultiplied BGRA pixels, ready for Direct2D.
@@ -51,20 +53,59 @@ pub struct ShelfItem {
     /// Shell icon or thumbnail, loaded on first draw. `Some(None)` means
     /// loading failed and a glyph is drawn instead.
     pub icon: Option<Option<Thumb>>,
+    pub extra: Extra,
+}
+
+/// What an item keeps beside its kind. Each is saved as an extra field.
+#[derive(Default)]
+pub struct Extra {
     /// The shell's link data for a file, saved when it was added, so
     /// Windows can find the file again after it moves on the same drive.
     pub track: Option<Vec<u8>>,
     /// A link's page title, when the browser sent one.
     pub title: Option<String>,
+    /// Formatted versions of a text item, as the source app gave them:
+    /// "HTML Format" (with its header) and "Rich Text Format".
+    pub html: Option<Vec<u8>>,
+    pub rtf: Option<Vec<u8>>,
+}
+
+impl Extra {
+    fn fields(&self) -> Vec<(u8, &[u8])> {
+        [
+            (FIELD_TRACK, self.track.as_deref()),
+            (FIELD_TITLE, self.title.as_deref().map(str::as_bytes)),
+            (FIELD_HTML, self.html.as_deref()),
+            (FIELD_RTF, self.rtf.as_deref()),
+        ]
+        .into_iter()
+        .filter_map(|(key, v)| Some((key, v?)))
+        .collect()
+    }
+
+    fn set(&mut self, key: u8, bytes: Vec<u8>) {
+        match key {
+            FIELD_TRACK => self.track = Some(bytes),
+            FIELD_TITLE => self.title = String::from_utf8(bytes).ok(),
+            FIELD_HTML => self.html = Some(bytes),
+            FIELD_RTF => self.rtf = Some(bytes),
+            _ => {}
+        }
+    }
+
+    pub fn is_rich(&self) -> bool {
+        self.html.is_some() || self.rtf.is_some()
+    }
 }
 
 impl ShelfItem {
-    fn new(id: u64, kind: Kind, title: Option<String>) -> ShelfItem {
-        let track = match &kind {
-            Kind::File(p) if p.exists() => track(p),
-            _ => None,
-        };
-        ShelfItem { id, kind, icon: None, track, title }
+    pub fn new(id: u64, kind: Kind, mut extra: Extra) -> ShelfItem {
+        if let Kind::File(p) = &kind
+            && p.exists()
+        {
+            extra.track = track(p);
+        }
+        ShelfItem { id, kind, icon: None, extra }
     }
 }
 
@@ -87,6 +128,8 @@ pub enum Dropped {
     Text(String),
     /// A link a browser sent with its page title.
     Link { url: String, title: String },
+    /// Text with the formatted versions the source app offered.
+    Rich { text: String, html: Option<Vec<u8>>, rtf: Option<Vec<u8>> },
     /// Image data with no file behind it, such as a screenshot.
     Image { bytes: Vec<u8>, ext: &'static str },
 }
@@ -190,12 +233,7 @@ impl Shelf {
                 out.extend_from_slice(&item.id.to_le_bytes());
                 out.push(tag);
                 put_str(&mut out, &body);
-                let fields: Vec<(u8, &[u8])> = item
-                    .track
-                    .iter()
-                    .map(|t| (FIELD_TRACK, t.as_slice()))
-                    .chain(item.title.iter().map(|t| (FIELD_TITLE, t.as_bytes())))
-                    .collect();
+                let fields = item.extra.fields();
                 out.push(fields.len() as u8);
                 for (key, bytes) in fields {
                     out.push(key);
@@ -245,7 +283,7 @@ impl Shelf {
         let all = self.items.iter_mut().chain(self.others.iter_mut().flatten());
         match all.into_iter().find(|i| i.id == id) {
             Some(item) => {
-                item.track = track(&path);
+                item.extra.track = track(&path);
                 item.kind = Kind::File(path);
                 item.icon = None;
                 true
@@ -258,7 +296,7 @@ impl Shelf {
     /// the link data saved when it was added, and points the item there.
     pub fn find_again(&mut self, id: u64) -> Option<PathBuf> {
         let item = self.items.iter().find(|i| i.id == id)?;
-        let found = resolve(item.track.as_deref()?)?;
+        let found = resolve(item.extra.track.as_deref()?)?;
         self.replace_path(id, found.clone());
         Some(found)
     }
@@ -311,18 +349,21 @@ impl Shelf {
 
     /// Adds dropped content, skipping duplicates. Returns how many were new.
     pub fn add(&mut self, dropped: Dropped) -> usize {
-        let kinds: Vec<(Kind, Option<String>)> = match dropped {
-            Dropped::Paths(paths) => paths.into_iter().map(|p| (Kind::File(p), None)).collect(),
-            Dropped::Image { bytes, ext } => owned_dir().and_then(|d| save_image(&d, &bytes, ext, &stamp())).map(|p| (Kind::File(p), None)).into_iter().collect(),
-            Dropped::Link { url, title } => vec![(Kind::Link(url.trim().to_string()), Some(title))],
+        let plain = Extra::default;
+        let kinds: Vec<(Kind, Extra)> = match dropped {
+            Dropped::Paths(paths) => paths.into_iter().map(|p| (Kind::File(p), plain())).collect(),
+            Dropped::Image { bytes, ext } => owned_dir().and_then(|d| save_image(&d, &bytes, ext, &stamp())).map(|p| (Kind::File(p), plain())).into_iter().collect(),
+            Dropped::Link { url, title } => vec![(Kind::Link(url.trim().to_string()), Extra { title: Some(title), ..plain() })],
+            Dropped::Rich { text, .. } if text.trim().is_empty() => Vec::new(),
+            Dropped::Rich { text, html, rtf } => vec![(Kind::Text(text), Extra { html, rtf, ..plain() })],
             Dropped::Text(t) if t.trim().is_empty() => Vec::new(),
-            Dropped::Text(t) if looks_like_link(&t) => vec![(Kind::Link(t.trim().to_string()), None)],
-            Dropped::Text(t) => vec![(Kind::Text(t), None)],
+            Dropped::Text(t) if looks_like_link(&t) => vec![(Kind::Link(t.trim().to_string()), plain())],
+            Dropped::Text(t) => vec![(Kind::Text(t), plain())],
         };
         let mut added = 0;
-        for (kind, title) in kinds {
+        for (kind, extra) in kinds {
             if !self.contains(&kind) {
-                self.items.insert(added, ShelfItem::new(self.next_id, kind, title));
+                self.items.insert(added, ShelfItem::new(self.next_id, kind, extra));
                 self.next_id += 1;
                 added += 1;
             }
@@ -427,16 +468,11 @@ fn parse(raw: &[u8]) -> Option<Saved> {
                 2 => Kind::Link(body),
                 _ => return None,
             };
-            let mut item = ShelfItem { id, kind, icon: None, track: None, title: None };
+            let mut item = ShelfItem { id, kind, icon: None, extra: Extra::default() };
             for _ in 0..if fields { take(1)?[0] } else { 0 } {
                 let key = take(1)?[0];
                 let len = u32_at(take(4)?) as usize;
-                let bytes = take(len)?.to_vec();
-                match key {
-                    FIELD_TRACK => item.track = Some(bytes),
-                    FIELD_TITLE => item.title = String::from_utf8(bytes).ok(),
-                    _ => {}
-                }
+                item.extra.set(key, take(len)?.to_vec());
             }
             items.push(item);
         }
@@ -456,12 +492,13 @@ pub fn name(kind: &Kind) -> String {
 
 /// The name on an item's tile: a link's page title if it has one.
 pub fn label(item: &ShelfItem) -> String {
-    item.title.clone().unwrap_or_else(|| name(&item.kind))
+    item.extra.title.clone().unwrap_or_else(|| name(&item.kind))
 }
 
 /// The kind word shown under the name.
-pub fn kind_label(kind: &Kind) -> &'static str {
-    match kind {
+pub fn kind_label(item: &ShelfItem) -> &'static str {
+    match &item.kind {
+        Kind::Text(_) if item.extra.is_rich() => "Rich text",
         Kind::File(p) if p.is_dir() => "Folder",
         Kind::File(p) if p.exists() => "File",
         Kind::File(_) => "Missing",
@@ -578,18 +615,20 @@ mod tests {
         s.add(Dropped::Text("note\nline".into()));
         s.add(Dropped::Text("https://example.com".into()));
         s.add(Dropped::Link { url: "https://e.com/notes".into(), title: "Release notes".into() });
+        s.add(Dropped::Rich { text: "bold".into(), html: Some(b"<b>bold</b>".to_vec()), rtf: None });
         assert!(parse(&shelf().encode()).unwrap().stacks[0].1.is_empty());
         s.new_stack();
         s.add(Dropped::Text("in the second".into()));
         s.rename(1, "Invoices");
         let back = Shelf::from_stacks(parse(&s.encode()).unwrap());
         assert_eq!(back.names, ["Stack", "Invoices"]);
-        assert_eq!((back.current, back.count(0), back.count(1)), (1, 4, 1));
+        assert_eq!((back.current, back.count(0), back.count(1)), (1, 5, 1));
         let first = &back.others[0];
-        assert!(matches!(&first[3].kind, Kind::File(p) if p.to_string_lossy() == "C:\\x\\ü.txt"));
-        assert!(matches!(&first[1].kind, Kind::Link(l) if l == "https://example.com"));
-        assert_eq!(label(&first[1]), "example.com");
-        assert_eq!(label(&first[0]), "Release notes");
+        assert!(matches!(&first[4].kind, Kind::File(p) if p.to_string_lossy() == "C:\\x\\ü.txt"));
+        assert!(matches!(&first[2].kind, Kind::Link(l) if l == "https://example.com"));
+        assert_eq!(label(&first[2]), "example.com");
+        assert_eq!(label(&first[1]), "Release notes");
+        assert_eq!(first[0].extra.html.as_deref(), Some(&b"<b>bold</b>"[..]));
     }
 
     #[test]
@@ -634,7 +673,7 @@ mod tests {
         assert_eq!(b.file_name().unwrap(), "Image 2026-11-03 120000 (2).png");
         assert_eq!(free_path(&dir, "Image 2026-11-03 120000.png").file_name().unwrap(), "Image 2026-11-03 120000 (3).png");
         fs::create_dir_all(dir.join("unzipped").join("inner")).unwrap();
-        let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None, track: None, title: None }];
+        let kept = [ShelfItem { id: 1, kind: Kind::File(a.clone()), icon: None, extra: Extra::default() }];
         prune(&dir, kept.iter());
         assert!(a.exists() && !b.exists() && !dir.join("unzipped").exists());
     }
@@ -709,7 +748,7 @@ mod tests {
         s.add(Dropped::Paths(vec![before.clone()]));
         // The link data survives a save and load.
         let mut s = Shelf::from_stacks(parse(&s.encode()).unwrap());
-        assert!(s.items[0].track.is_some());
+        assert!(s.items[0].extra.track.is_some());
         fs::rename(&before, &after).unwrap();
         let found = s.find_again(s.items[0].id).expect("found again");
         let real = |p: &Path| fs::canonicalize(p).unwrap();
@@ -721,6 +760,11 @@ mod tests {
     #[test]
     fn display_names() {
         assert_eq!(name(&Kind::Link("https://www.example.com/x".into())), "example.com/x");
-        assert_eq!(kind_label(&Kind::File("Z:\\definitely\\missing.bin".into())), "Missing");
+        let item = |kind| ShelfItem { id: 0, kind, icon: None, extra: Extra::default() };
+        assert_eq!(kind_label(&item(Kind::File("Z:\\definitely\\missing.bin".into()))), "Missing");
+        let mut rich = item(Kind::Text("bold".into()));
+        assert_eq!(kind_label(&rich), "Text");
+        rich.extra.rtf = Some(b"{\\rtf1 \\b bold}".to_vec());
+        assert_eq!(kind_label(&rich), "Rich text");
     }
 }

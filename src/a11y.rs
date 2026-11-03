@@ -82,7 +82,7 @@ impl IAccessible_Impl for StackAccessible_Impl {
             }
             Some(i) => {
                 let item = &app.stack.items[i];
-                BSTR::from(format!("{}, {}", shelf::label(item), shelf::kind_label(&item.kind)))
+                BSTR::from(format!("{}, {}", shelf::label(item), shelf::kind_label(item)))
             }
         })
     }
