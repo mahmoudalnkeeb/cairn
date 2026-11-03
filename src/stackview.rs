@@ -54,6 +54,7 @@ const GLYPH_MISSING: &str = "\u{E7BA}";
 const GLYPH_CODE: &str = "\u{E943}";
 const GLYPH_MAIL: &str = "\u{E715}";
 const GLYPH_PHONE: &str = "\u{E717}";
+const GLYPH_NOTE: &str = "\u{E70B}";
 const GLYPH_ADD: &str = "\u{E710}";
 const GLYPH_REMOVE: &str = "\u{E711}";
 
@@ -85,6 +86,8 @@ pub struct StackView {
     /// The current stack's name while it is being renamed. `fresh` means the
     /// first key typed replaces it.
     editing: Option<(String, bool)>,
+    /// A note or a link's name being typed, in a box over the grid.
+    tile_edit: Option<TileEdit>,
     /// 0 hidden, 1 open: fades the card in and slides it from the tab.
     show: Tween,
     /// The drop-hover tint.
@@ -98,6 +101,16 @@ pub struct StackView {
     lifted: Vec<u64>,
     lift: Tween,
 }
+
+struct TileEdit {
+    id: u64,
+    text: String,
+    /// A note takes several lines and saves on Esc. A link's name is one
+    /// line: Enter saves, Esc cancels.
+    note: bool,
+}
+
+const NOTE_MAX: usize = 10_000;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Head {
@@ -123,11 +136,13 @@ const A_COPY_HEX: u32 = 9;
 const A_COPY_RGB: u32 = 10;
 const A_COPY_HSL: u32 = 11;
 const A_SHOW_AS: u32 = 12;
+const A_EDIT: u32 = 13;
 const A_MOVE_BASE: u32 = 100;
 // Stack tab menu.
 const H_RENAME: u32 = 1;
 const H_DELETE: u32 = 2;
 const H_NEW: u32 = 3;
+const H_NOTE: u32 = 4;
 
 impl StackView {
     pub fn new(hwnd: HWND) -> StackView {
@@ -152,6 +167,7 @@ impl StackView {
             add_x: 0.0,
             last_head_click: None,
             editing: None,
+            tile_edit: None,
             show: Tween::new(0.0),
             drop_t: Tween::new(0.0),
             flash: Tween::new(0.0),
@@ -281,6 +297,7 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
                     let glyph = match (&item.kind, form) {
                         (Kind::File(_), _) => GLYPH_MISSING,
                         (Kind::Link(_), _) => GLYPH_LINK,
+                        _ if item.extra.note => GLYPH_NOTE,
                         (_, Some(Form::Code)) => GLYPH_CODE,
                         (_, Some(Form::Email)) => GLYPH_MAIL,
                         (_, Some(Form::Phone)) => GLYPH_PHONE,
@@ -467,6 +484,10 @@ pub fn render(app: &mut App) {
     let f = fonts(g);
     let caption_lead = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
     let caption_end = fmt(&g.ui_font, 12.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
+    // Wrapped body text from the top left, for the note editor.
+    let edit_fmt = fmt(&g.ui_font, 14.0, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING).filter(|f| unsafe {
+        f.SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP).is_ok() && f.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR).is_ok()
+    });
     let items = &app.stack.items;
     let (drop_t, flash, settle, lift) = (v.drop_t.value(), v.flash.value(), v.settle.value(), v.lift.value());
 
@@ -554,9 +575,24 @@ pub fn render(app: &mut App) {
             let top = (GRID_H - thumb) * v.scroll as f32 / (total_rows - ROWS) as f32;
             p.fill_rounded(cx + CARD_W - 5.0, cy + GRID_Y + top, 2.0, thumb, 1.0, t.text_secondary);
         }
+        if let Some(edit) = &v.tile_edit {
+            // The text box: surface, 4 px corners, focus ring while typing.
+            let (bx, by, bw, bh) = (cx + M, cy + GRID_Y, CARD_W - M * 2.0, GRID_H);
+            p.fill_rounded(bx, by, bw, bh, 4.0, t.surface);
+            p.stroke_rounded(bx + 0.5, by + 0.5, bw - 1.0, bh - 1.0, 4.0, 1.0, t.focus_ring);
+            if let Some(f) = &edit_fmt {
+                let (text, color) = match edit.text.is_empty() {
+                    true if edit.note => ("Type a note|".to_string(), t.text_secondary),
+                    _ => (format!("{}|", edit.text), t.text),
+                };
+                p.text(&text, f, bx + 12.0, by + 10.0, bw - 24.0, bh - 20.0, color);
+            }
+        }
         p.fill_rect(cx, cy + FOOTER_Y - 4.0, CARD_W, 1.0, t.divider);
         if let Some(f) = &caption_lead {
             let hint = match v.sel.len() {
+                _ if v.tile_edit.as_ref().is_some_and(|e| e.note) => "Esc or click away to save     Enter new line".to_string(),
+                _ if v.tile_edit.is_some() => "Enter save     Esc cancel     Leave empty to show the address".to_string(),
                 _ if v.drop_hover && app.stack.names.len() > 1 => format!("Drop to add to {}     Point at another name to switch", app.stack.names[app.stack.current]),
                 _ if v.drop_hover => format!("Drop to add to {}", app.stack.names[app.stack.current]),
                 _ if v.dragging_in => "Move onto the stack to drop here".to_string(),
@@ -660,6 +696,62 @@ fn finish_rename(app: &mut App, commit: bool) {
     }
 }
 
+/// Starts a new, empty note at the front of the stack and types into it.
+fn new_note(app: &mut App) {
+    finish_rename(app, true);
+    finish_tile_edit(app, true);
+    peek::close(app);
+    let id = app.stack.add_note();
+    reset_view(app);
+    app.stack_view.tile_edit = Some(TileEdit { id, text: String::new(), note: true });
+    render(app);
+}
+
+/// Edits a note's text, or a link's name, in the box over the grid.
+fn start_tile_edit(app: &mut App, id: u64) {
+    let Some(item) = app.stack.items.iter().find(|i| i.id == id) else { return };
+    let edit = match &item.kind {
+        Kind::Text(t) if item.extra.note => TileEdit { id, text: t.clone(), note: true },
+        Kind::Link(_) => TileEdit { id, text: shelf::label(item), note: false },
+        _ => return,
+    };
+    peek::close(app);
+    app.stack_view.tile_edit = Some(edit);
+    render(app);
+}
+
+/// Saves what was typed (a note always; a link's name unless `commit` is
+/// false), and drops a note left empty.
+fn finish_tile_edit(app: &mut App, commit: bool) {
+    let Some(edit) = app.stack_view.tile_edit.take() else { return };
+    if edit.note {
+        app.stack.set_note(edit.id, edit.text);
+    } else if commit {
+        app.stack.set_title(edit.id, &edit.text);
+    }
+    app.stack.save();
+    refresh(app);
+    announce(app);
+}
+
+/// Typing into the note or name box.
+fn tile_edit_char(app: &mut App, c: char) {
+    let Some(edit) = &mut app.stack_view.tile_edit else { return };
+    match c {
+        '\r' if !edit.note => return finish_tile_edit(app, true),
+        '\r' => edit.text.push('\n'),
+        '\u{8}' => {
+            edit.text.pop();
+        }
+        c if c.is_control() => return,
+        c => edit.text.push(c),
+    }
+    if edit.text.chars().count() > NOTE_MAX {
+        edit.text.pop();
+    }
+    render(app);
+}
+
 /// Typing while a stack is being renamed. Returns false for keys it leaves
 /// alone.
 fn edit_key(app: &mut App, vk: VIRTUAL_KEY) -> bool {
@@ -760,6 +852,12 @@ fn tile_menu(app: &mut App, at: POINT) {
         Some(Form::Text) => (None, Some(shelf::AS_CODE)),
         _ => (None, None),
     };
+    // A note's text and a link's name can be typed over.
+    let edit = match app.stack.items.iter().find(|i| i.id == ids[0]).filter(|_| one) {
+        Some(i) if i.extra.note => Some(w!("Edit note")),
+        Some(ShelfItem { kind: Kind::Link(_), .. }) => Some(w!("Rename")),
+        _ => None,
+    };
     let has_files = !files.is_empty();
     let menu = unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
@@ -771,6 +869,9 @@ fn tile_menu(app: &mut App, at: POINT) {
             let open = if first_is_text { w!("Paste") } else { w!("Open") };
             let _ = AppendMenuW(menu, MF_STRING, A_OPEN as usize, open);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        }
+        if let Some(label) = edit {
+            let _ = AppendMenuW(menu, MF_STRING, A_EDIT as usize, label);
         }
         if plain.is_some() {
             let _ = AppendMenuW(menu, MF_STRING, A_COPY_PLAIN as usize, w!("Copy as plain text"));
@@ -814,6 +915,7 @@ fn tile_menu(app: &mut App, at: POINT) {
             };
             copy_text(app, &text, "Color copied");
         }
+        A_EDIT => start_tile_edit(app, ids[0]),
         A_SHOW_AS => {
             let Some(f) = show_as else { return };
             app.stack.set_form(ids[0], f);
@@ -884,6 +986,7 @@ fn head_menu(app: &mut App, stack: usize, at: POINT) {
         let Ok(menu) = CreatePopupMenu() else { return };
         let _ = AppendMenuW(menu, MF_STRING, H_RENAME as usize, w!("Rename\tF2"));
         let _ = AppendMenuW(menu, MF_STRING, H_NEW as usize, w!("New stack\tCtrl+N"));
+        let _ = AppendMenuW(menu, MF_STRING, H_NOTE as usize, w!("New note\tCtrl+Shift+N"));
         let delete = match n {
             0 => "Delete stack".to_string(),
             1 => "Delete stack and its item".to_string(),
@@ -897,6 +1000,7 @@ fn head_menu(app: &mut App, stack: usize, at: POINT) {
     match popup(app.stack_view.hwnd, menu, at) {
         H_RENAME => start_rename(app),
         H_NEW => new_stack(app),
+        H_NOTE => new_note(app),
         H_DELETE => delete_stack(app, stack),
         _ => {}
     }
@@ -1020,8 +1124,9 @@ pub fn close(app: &mut App, restore: bool) {
     if !app.stack_view.open {
         return;
     }
-    // Clicking away keeps a name that was being typed.
+    // Clicking away keeps a name or a note that was being typed.
     finish_rename(app, true);
+    finish_tile_edit(app, true);
     peek::close(app);
     let d = ms(app, CLOSE_MS);
     let v = &mut app.stack_view;
@@ -1230,6 +1335,25 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
     if msg == WM_KEYDOWN && app.stack_view.editing.is_some() && edit_key(app, vk) {
         return Some(LRESULT(0));
     }
+    // While a note or name is being typed, keys go to it, not to the tiles.
+    if let Some(note) = app.stack_view.tile_edit.as_ref().map(|e| e.note) {
+        match msg {
+            WM_KEYDOWN if vk == VK_ESCAPE => finish_tile_edit(app, note),
+            WM_KEYDOWN => {}
+            WM_CHAR => {
+                if let Some(c) = char::from_u32(wparam.0 as u32) {
+                    tile_edit_char(app, c);
+                }
+            }
+            // A click anywhere in the stack saves and goes on as usual.
+            WM_LBUTTONDOWN | WM_RBUTTONUP => {
+                finish_tile_edit(app, true);
+                return handle(app, hwnd, msg, wparam, lparam);
+            }
+            _ => return None,
+        }
+        return Some(LRESULT(0));
+    }
     match msg {
         WM_CHAR => {
             if let Some(c) = char::from_u32(wparam.0 as u32) {
@@ -1239,6 +1363,7 @@ pub fn handle(app: &mut App, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
         WM_KEYDOWN if app.stack_view.editing.is_some() => {}
         WM_KEYDOWN => match vk {
             VK_TAB if key_down(VK_CONTROL) => cycle_stack(app, if key_down(VK_SHIFT) { -1 } else { 1 }),
+            VK_N if key_down(VK_CONTROL) && key_down(VK_SHIFT) => new_note(app),
             VK_N if key_down(VK_CONTROL) => new_stack(app),
             VK_F2 => start_rename(app),
             VK_APPS => focused_menu(app),

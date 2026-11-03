@@ -15,6 +15,8 @@ All notable changes to Cairn are listed here. Versions follow [Semantic Versioni
 - An email address or phone number gets its own tile. Double-click to start a message or a call.
 - Press Space on an item to take a closer look: a larger picture of a file, the whole text, or a color in hex, RGB and HSL, in a card beside the stack. The arrow keys move through the stack and the card follows. Space or Esc closes it.
 - Hold Alt as you start dragging items out to send another form: a file's path, an image file as a picture, text as a .txt file, a link as a .url shortcut, or several items as lines of text. The drag picture says which.
+- Notes: press Ctrl+Shift+N, or right-click a stack's name, and type a short note right in the stack. Esc or clicking away saves it, an empty note is removed, and "Edit note" on its right-click menu changes it. A note drags out as text.
+- "Rename" on a link's right-click menu, to fix a title or name a link that came without one.
 - A file moved to another folder on the same drive is found again when you open it from the stack.
 - "Find file…" on a missing file's right-click menu, to point the item at where the file is now.
 

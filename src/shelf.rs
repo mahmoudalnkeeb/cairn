@@ -26,6 +26,7 @@ const FIELD_TITLE: u8 = 2;
 const FIELD_HTML: u8 = 3;
 const FIELD_RTF: u8 = 4;
 const FIELD_FORM: u8 = 5;
+const FIELD_NOTE: u8 = 6;
 /// `Extra::form` values: the user chose "Show as text" or "Show as code".
 pub const AS_TEXT: u8 = 1;
 pub const AS_CODE: u8 = 2;
@@ -75,6 +76,8 @@ pub struct Extra {
     pub rtf: Option<Vec<u8>>,
     /// Overrides whether plain text shows as code: `AS_TEXT` or `AS_CODE`.
     pub form: Option<u8>,
+    /// A text item typed into the stack as a note.
+    pub note: bool,
 }
 
 impl Extra {
@@ -85,6 +88,7 @@ impl Extra {
             (FIELD_HTML, self.html.as_deref()),
             (FIELD_RTF, self.rtf.as_deref()),
             (FIELD_FORM, self.form.as_ref().map(std::slice::from_ref)),
+            (FIELD_NOTE, self.note.then_some(&[1u8][..])),
         ]
         .into_iter()
         .filter_map(|(key, v)| Some((key, v?)))
@@ -98,6 +102,7 @@ impl Extra {
             FIELD_HTML => self.html = Some(bytes),
             FIELD_RTF => self.rtf = Some(bytes),
             FIELD_FORM => self.form = bytes.first().copied(),
+            FIELD_NOTE => self.note = true,
             _ => {}
         }
     }
@@ -317,6 +322,31 @@ impl Shelf {
         }
     }
 
+    /// Puts an empty note at the front of the current stack and returns its id.
+    pub fn add_note(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.items.insert(0, ShelfItem::new(id, Kind::Text(String::new()), Extra { note: true, ..Extra::default() }));
+        id
+    }
+
+    /// Saves a note's text, or removes the note when it is left empty.
+    pub fn set_note(&mut self, id: u64, text: String) {
+        if text.trim().is_empty() {
+            self.remove(id);
+        } else if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+            item.kind = Kind::Text(text);
+        }
+    }
+
+    /// Renames a link; an empty name goes back to showing its address.
+    pub fn set_title(&mut self, id: u64, title: &str) {
+        if let Some(item) = self.items.iter_mut().find(|i| i.id == id) {
+            let title = title.trim();
+            item.extra.title = (!title.is_empty()).then(|| title.to_string());
+        }
+    }
+
     /// Deletes Cairn's own copies that no stack refers to any more. Items in
     /// `keep` (waiting for undo) count as referred to.
     pub fn prune_owned(&self, keep: &[ShelfItem]) {
@@ -510,7 +540,7 @@ pub fn name(kind: &Kind) -> String {
 /// number or just text. None for other items, and for rich text.
 pub fn form(item: &ShelfItem) -> Option<Form> {
     match &item.kind {
-        Kind::Text(t) if !item.extra.is_rich() => Some(match item.extra.form {
+        Kind::Text(t) if !item.extra.is_rich() && !item.extra.note => Some(match item.extra.form {
             Some(AS_TEXT) => Form::Text,
             Some(AS_CODE) => Form::Code,
             _ => detect::detect(t),
@@ -523,13 +553,21 @@ pub fn form(item: &ShelfItem) -> Option<Form> {
 /// line of code.
 pub fn label(item: &ShelfItem) -> String {
     match (&item.kind, form(item)) {
-        (Kind::Text(t), Some(Form::Code)) => preview(t.lines().find(|l| !l.trim().is_empty()).unwrap_or_default()),
+        (Kind::Text(t), Some(Form::Code)) => first_line(t),
+        (Kind::Text(t), _) if item.extra.note => first_line(t),
         _ => item.extra.title.clone().unwrap_or_else(|| name(&item.kind)),
     }
 }
 
+fn first_line(t: &str) -> String {
+    preview(t.lines().find(|l| !l.trim().is_empty()).unwrap_or_default())
+}
+
 /// The kind word shown under the name.
 pub fn kind_label(item: &ShelfItem) -> &'static str {
+    if item.extra.note {
+        return "Note";
+    }
     match form(item) {
         Some(Form::Code) => return "Code",
         Some(Form::Color(_)) => return "Color",
@@ -801,6 +839,27 @@ mod tests {
         assert_eq!(real(&found), real(&after));
         assert!(matches!(&s.items[0].kind, Kind::File(p) if real(p) == real(&after)));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn notes_are_kept_renamed_or_dropped_when_empty() {
+        let mut s = shelf();
+        s.add(Dropped::Text("#3b82f6".into()));
+        let id = s.add_note();
+        assert_eq!(s.items[0].id, id);
+        s.set_note(id, "Send these to Dana\nthe second one first".into());
+        assert_eq!((label(&s.items[0]).as_str(), kind_label(&s.items[0])), ("Send these to Dana", "Note"));
+        let back = Shelf::from_stacks(parse(&s.encode()).unwrap());
+        assert!(back.items[0].extra.note);
+        let empty = s.add_note();
+        s.set_note(empty, "  \n".into());
+        assert_eq!(s.items.len(), 2);
+        s.add(Dropped::Link { url: "https://e.com".into(), title: "Old".into() });
+        let link = s.items[0].id;
+        s.set_title(link, " Trail map ");
+        assert_eq!(label(&s.items[0]), "Trail map");
+        s.set_title(link, "");
+        assert_eq!(label(&s.items[0]), "e.com");
     }
 
     #[test]

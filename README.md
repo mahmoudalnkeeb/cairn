@@ -65,6 +65,8 @@ Drag something to the right edge of the screen. A drop zone appears; let go and 
 | Remove | <kbd>Del</kbd>, or the × on a tile |
 | Clear the stack | Tray menu, then "Clear stack" (undo within 10 seconds) |
 | New stack | The + next to the stack names, or <kbd>Ctrl</kbd>+<kbd>N</kbd> |
+| New note | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>, or right-click a stack's name. <kbd>Esc</kbd> or clicking away saves it; an empty note is removed. Right-click a note for "Edit note" |
+| Rename a link | Right-click it, then "Rename". Leave it empty to show the address again |
 | Switch stacks | Click a name, or <kbd>Ctrl</kbd>+<kbd>Tab</kbd> |
 | Drop into a particular stack | Hold the drag on the edge tab until the stack opens, point at the stack's name, and let go over the stack |
 | Rename or delete a stack | Double-click its name or press <kbd>F2</kbd> to rename; right-click it for both |
