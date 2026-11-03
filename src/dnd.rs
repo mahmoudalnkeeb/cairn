@@ -454,7 +454,9 @@ mod tests {
         let (ka, kb) = (Kind::File(a.clone()), Kind::File(b.clone()));
         let obj = data_object_many(&[&ka, &note, &missing, &kb]).expect("data object");
         let Some(Dropped::Paths(paths)) = read(&obj) else { panic!("no file drop") };
-        assert_eq!(paths, [a, b]);
+        // The shell gives back long names, and TEMP can be a short 8.3 path (as on CI runners).
+        let real = |p: &PathBuf| std::fs::canonicalize(p).unwrap();
+        assert_eq!(paths.iter().map(real).collect::<Vec<_>>(), [real(&a), real(&b)]);
     }
 
     #[test]
