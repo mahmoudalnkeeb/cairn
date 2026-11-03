@@ -292,7 +292,7 @@ fn draw_tile(p: &Painter, t: &Theme, f: &Fonts, item: &ShelfItem, tx: f32, ty: f
                 p.image(&icon.bgra, icon.w, icon.h, tx + (TILE_W - iw) / 2.0, ty + 10.0 + (32.0 - ih) / 2.0, iw, ih);
             }
             None => match form {
-                Some(Form::Color(c)) => swatch(p, t, tx + (TILE_W - SWATCH) / 2.0, ty + 12.0, c),
+                Some(Form::Color(c)) => swatch(p, t, tx + (TILE_W - SWATCH) / 2.0, ty + 12.0, SWATCH, c),
                 _ => {
                     let glyph = match (&item.kind, form) {
                         (Kind::File(_), _) => GLYPH_MISSING,
@@ -325,19 +325,21 @@ const SWATCH: f32 = 28.0;
 /// A color item's tile picture: the color in a small rounded square, over a
 /// checkerboard when it is see-through, with an outline so a color close to
 /// the tile still shows.
-fn swatch(p: &Painter, t: &Theme, x: f32, y: f32, [r, g, b, a]: [u8; 4]) {
+pub fn swatch(p: &Painter, t: &Theme, x: f32, y: f32, size: f32, [r, g, b, a]: [u8; 4]) {
     const CELL: f32 = SWATCH / 4.0;
     if a < 255 {
-        for i in 0..4 {
-            for j in 0..4 {
+        let n = (size / CELL).ceil() as usize;
+        for i in 0..n {
+            for j in 0..n {
                 let c = if (i + j) % 2 == 0 { t.surface_sunken } else { t.surface };
-                p.fill_rect(x + i as f32 * CELL, y + j as f32 * CELL, CELL, CELL, c);
+                let (cx, cy) = (i as f32 * CELL, j as f32 * CELL);
+                p.fill_rect(x + cx, y + cy, CELL.min(size - cx), CELL.min(size - cy), c);
             }
         }
     }
     let color = Color(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0);
-    p.fill_rounded(x, y, SWATCH, SWATCH, 4.0, color);
-    p.stroke_rounded(x + 0.5, y + 0.5, SWATCH - 1.0, SWATCH - 1.0, 4.0, 1.0, t.outline);
+    p.fill_rounded(x, y, size, size, 4.0, color);
+    p.stroke_rounded(x + 0.5, y + 0.5, size - 1.0, size - 1.0, 4.0, 1.0, t.outline);
 }
 
 /// What a drag out shows under the cursor: the grabbed tile, the rest of

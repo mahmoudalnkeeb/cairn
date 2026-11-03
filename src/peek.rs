@@ -7,7 +7,7 @@ use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::detect::{self, Form};
-use crate::gfx::{Color, Surface, Tween};
+use crate::gfx::{Surface, Tween};
 use crate::settings::Edge;
 use crate::shelf::{self, Kind, Thumb};
 use crate::{App, edgetab, stackview};
@@ -172,10 +172,7 @@ pub fn render(app: &mut App) {
                 }
             },
             (_, Some(Form::Color(c))) => {
-                let [r, gr, b, a] = c;
-                let color = Color(r as f32 / 255.0, gr as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0);
-                pt.fill_rounded(bx, by, BIG_SWATCH, BIG_SWATCH, 4.0, color);
-                pt.stroke_rounded(bx + 0.5, by + 0.5, BIG_SWATCH - 1.0, BIG_SWATCH - 1.0, 4.0, 1.0, t.outline);
+                stackview::swatch(pt, t, bx, by, BIG_SWATCH, c);
                 if let Some(f) = &lead(&g.code_font, 13.0, DWRITE_FONT_WEIGHT_NORMAL) {
                     for (i, line) in [detect::hex(c), detect::rgb(c), detect::hsl(c)].iter().enumerate() {
                         pt.text(line, f, bx + BIG_SWATCH + M, by + 8.0 + i as f32 * 28.0, bw - BIG_SWATCH - M, 20.0, t.text);
