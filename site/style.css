@@ -192,9 +192,10 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
 @media (max-width: 860px) { .tour { grid-template-columns: 1fr; } }
 
 /* Step pictures: a desktop drawn at 880 × 495 and scaled to fit. Your apps
-   fill the screen; Cairn's parts keep their real sizes beside them (tab pill
-   4 × 96 at 3 px, drop zone 88 × 160 at 6 px, tiles 96 × 88, stack 8 px from
-   the tab). One loop is 4.8 s. */
+   fill the screen. Cairn's parts are drawn with the app's own proportions
+   (tab pill 4 × 96 at 3 px, drop zone 88 × 160 at 6 px, tiles 96 × 88, stack
+   8 px from the tab) inside .s-dock, which shrinks them toward the right edge
+   so the apps stay the focus. One loop is 4.8 s. */
 .pic { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--wallpaper); border: 1px solid var(--outline); border-radius: 12px; }
 .scene { position: absolute; left: 0; top: 0; width: 880px; height: 495px; transform: scale(var(--s, 1)); transform-origin: 0 0; font-family: var(--app); color: var(--text); }
 
@@ -209,6 +210,8 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
 .s-mail aside { display: grid; align-content: start; gap: 10px; padding: 18px 14px; border-right: 1px solid var(--line); }
 .s-mail article { display: grid; align-content: start; gap: 12px; padding: 22px; }
 .s-mail i { display: block; height: 9px; background: var(--line); border-radius: 5px; }
+
+.s-dock { position: absolute; inset: 0; transform: scale(.7); transform-origin: 100% 50%; }
 
 /* The idle edge tab. */
 .s-pill { position: absolute; right: 3px; top: 199px; width: 4px; height: 96px; background: color-mix(in srgb, var(--outline-control) 40%, transparent); border-radius: 2px; }
@@ -241,9 +244,9 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
 @keyframes s-carry {
   0% { opacity: 0; transform: translate(152px, 80px); }
   6% { opacity: .85; transform: translate(156px, 84px); }
-  30% { transform: translate(700px, 190px); }
-  52% { opacity: .85; transform: translate(770px, 200px); }
-  56%, 100% { opacity: 0; transform: translate(770px, 200px) scale(.8); }
+  30% { transform: translate(700px, 196px); }
+  52% { opacity: .85; transform: translate(778px, 205px); }
+  56%, 100% { opacity: 0; transform: translate(778px, 205px) scale(.8); }
 }
 
 /* Steps 2 and 3: the stack, opened beside the tab. */
@@ -263,10 +266,10 @@ section { margin-top: var(--section); scroll-margin-top: 88px; }
 .s-out .s-files .got { animation: s-arrive 4.8s step-end infinite; }
 .s-out .s-ghost { animation: s-deliver 4.8s var(--ease) infinite; }
 @keyframes s-deliver {
-  0%, 8% { opacity: 0; transform: translate(442px, 200px); }
-  14% { opacity: .85; transform: translate(436px, 204px); }
-  50% { opacity: .85; transform: translate(152px, 206px); }
-  56%, 100% { opacity: 0; transform: translate(152px, 206px) scale(.8); }
+  0%, 8% { opacity: 0; transform: translate(572px, 212px); }
+  14% { opacity: .85; transform: translate(566px, 216px); }
+  50% { opacity: .85; transform: translate(42px, 206px); }
+  56%, 100% { opacity: 0; transform: translate(42px, 206px) scale(.8); }
 }
 @keyframes s-receive {
   0% { background: transparent; border-color: transparent; }
